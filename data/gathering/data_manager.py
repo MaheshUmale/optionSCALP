@@ -14,21 +14,17 @@ class DataManager:
         return round(spot_price / step) * step
 
     def get_next_expiry(self, index="BANKNIFTY"):
-        from datetime import datetime, timedelta
-        # Current date in simulation is Jan 20, 2026
-        today = datetime(2026, 1, 20)
+        from datetime import datetime
+        # Simulation fixed date
+        today_str = "260120"
 
-        # Based on user feedback and examples:
-        # Jan 20 (Tuesday) and Jan 27 (Tuesday) appear to be the target expiries.
-        # So we use Tuesday (weekday 1) for both.
-        target_weekday = 1
+        # Provided NSE Expiry Dates for Jan 2026
+        expires = ["260106", "260113", "260120", "260127", "260203"]
 
-        days_ahead = target_weekday - today.weekday()
-        if days_ahead < 0: # Target already passed this week
-            days_ahead += 7
-
-        expiry_date = today + timedelta(days_ahead)
-        return expiry_date.strftime("%y%m%d")
+        for exp in expires:
+            if exp >= today_str:
+                return exp
+        return expires[-1]
 
     def get_option_symbol(self, index="BANKNIFTY", strike=58400, type="C", expiry=None):
         if expiry is None:
