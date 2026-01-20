@@ -2,7 +2,7 @@
 
 ## Phase 1: Infrastructure & Data Gathering
 - [x] Create project directory structure
-- [x] Set up Python environment and dependencies (`tvDatafeed`, `streamlit`, `plotly`, `pandas`)
+- [x] Set up Python environment and dependencies (`tvDatafeed`, `PyQt6, pyqtgraph`, `plotly`, `pandas`)
 - [x] Implement `TvFeed` wrapper for TradingView data fetching
 - [x] Implement `DataManager` for caching and retrieving historical OHLCV data for Index and Options
 

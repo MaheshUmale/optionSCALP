@@ -1,36 +1,28 @@
-import os
 import pandas as pd
 from data.gathering.tv_feed import TvFeed
 from tvDatafeed import Interval
+import math
 
 class DataManager:
-    def __init__(self, data_dir="data_cache"):
-        self.data_dir = data_dir
-        if not os.path.exists(self.data_dir):
-            os.makedirs(self.data_dir)
+    def __init__(self):
         self.feed = TvFeed()
 
-    def fetch_and_save(self, symbol, exchange="NSE", interval=Interval.in_5_minute, n_bars=1000):
-        data = self.feed.get_historical_data(symbol, exchange, interval, n_bars)
-        if data is not None:
-            filename = f"{symbol}_{interval}.csv".replace(":", "_")
-            filepath = os.path.join(self.data_dir, filename)
-            data.to_csv(filepath)
-            return data
-        return None
+    def get_index_data(self, symbol="BANKNIFTY", interval=Interval.in_5_minute, n_bars=100):
+        return self.feed.get_historical_data(symbol, exchange="NSE", interval=interval, n_bars=n_bars)
 
-    def load_data(self, symbol, interval=Interval.in_5_minute):
-        filename = f"{symbol}_{interval}.csv".replace(":", "_")
-        filepath = os.path.join(self.data_dir, filename)
-        if os.path.exists(filepath):
-            df = pd.read_csv(filepath, index_col=0, parse_dates=True)
-            return df
-        return None
+    def get_atm_strike(self, spot_price, step=100):
+        return round(spot_price / step) * step
 
-    def get_data(self, symbol, exchange="NSE", interval=Interval.in_5_minute, n_bars=1000, force_refresh=False):
-        if not force_refresh:
-            data = self.load_data(symbol, interval)
-            if data is not None:
-                return data
+    def get_option_symbol(self, index="BANKNIFTY", strike=58400, type="C", expiry="260127"):
+        # Format: BANKNIFTY260127C58400
+        return f"{index}{expiry}{type}{strike}"
 
-        return self.fetch_and_save(symbol, exchange, interval, n_bars)
+    def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100):
+        df = self.feed.get_historical_data(symbol, exchange="NSE", interval=interval, n_bars=n_bars)
+        if df is not None:
+            # Fix gaps in time - reindex to remove empty spaces between market hours if needed
+            # For plotting we often just use range index to avoid time gaps
+            df = df.reset_index()
+            if 'datetime' not in df.columns and 'index' in df.columns:
+                df = df.rename(columns={'index': 'datetime'})
+        return df
