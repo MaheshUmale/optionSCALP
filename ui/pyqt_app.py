@@ -73,17 +73,36 @@ class ScalpApp(QMainWindow):
         self.bt_run_btn = QPushButton("Run Backtest on Current Symbol")
         self.bt_run_btn.clicked.connect(self.run_backtest)
         bt_layout.addWidget(self.bt_run_btn)
+
+        # Replay Controls in Backtest Tab
+        replay_ctrl = QHBoxLayout()
+        self.replay_btn = QPushButton("Start Visual Replay")
+        self.replay_btn.clicked.connect(self.start_replay)
+        replay_ctrl.addWidget(self.replay_btn)
+        self.replay_speed = QComboBox()
+        self.replay_speed.addItems(["1s", "2s", "5s"])
+        replay_ctrl.addWidget(QLabel("Speed:"))
+        replay_ctrl.addWidget(self.replay_speed)
+        bt_layout.addLayout(replay_ctrl)
+
         bt_layout.addWidget(self.bt_report)
-        self.tabs.addTab(self.bt_tab, "Backtest")
+        self.tabs.addTab(self.bt_tab, "Backtest / Replay")
 
         chart_layout.addWidget(self.tabs)
+
+        # Replay Timer & State
+        self.replay_timer = QtCore.QTimer()
+        self.replay_timer.timeout.connect(self.step_replay)
+        self.replay_idx = 0
+        self.replay_df_index = None
+        self.replay_df_option = None
         main_layout.addLayout(chart_layout, stretch=3)
 
         # Right Panel: Signals & Trade Details
         right_panel = QVBoxLayout()
         right_panel.addWidget(QLabel("<b>ACTIVE SIGNALS</b>"))
         self.signal_table = QTableWidget(0, 4)
-        self.signal_table.setHorizontalLabels(["Time", "Symbol", "Type", "Status"])
+        self.signal_table.setHorizontalHeaderLabels(["Time", "Symbol", "Type", "Status"])
         self.signal_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         right_panel.addWidget(self.signal_table)
 
@@ -177,6 +196,58 @@ class ScalpApp(QMainWindow):
                 if setup:
                     results.append(f"Time: {i}, Signal: BUY")
             self.bt_report.setText("<br>".join(results) if results else "No signals found in history.")
+
+    def start_replay(self):
+        if self.replay_timer.isActive():
+            self.replay_timer.stop()
+            self.replay_btn.setText("Start Visual Replay")
+            return
+
+        self.info_panel.setText("Initializing Replay...")
+        index_sym = self.index_combo.currentText()
+        self.replay_df_index = self.dm.get_data(index_sym, interval=Interval.in_15_minute, n_bars=100)
+
+        # Determine ATM Option for the start of the replay
+        if self.replay_df_index is not None:
+            last_spot = self.replay_df_index['close'].iloc[0]
+            strike = self.dm.get_atm_strike(last_spot)
+            # Fetch Call option for simulation
+            opt_sym = self.dm.get_option_symbol(index_sym, strike, "C", "260127")
+            self.replay_df_option = self.dm.get_data(opt_sym, interval=Interval.in_5_minute, n_bars=100)
+
+            if self.replay_df_option is not None:
+                self.replay_idx = 20 # Start with some history
+                speed_map = {"1s": 1000, "2s": 2000, "5s": 5000}
+                self.replay_timer.start(speed_map[self.replay_speed.currentText()])
+                self.replay_btn.setText("Stop Replay")
+                self.tabs.setCurrentIndex(0) # Switch to Charts view
+
+    def step_replay(self):
+        if self.replay_idx >= len(self.replay_df_option):
+            self.replay_timer.stop()
+            self.replay_btn.setText("Start Visual Replay")
+            self.info_panel.setText("Replay Finished.")
+            return
+
+        # Feed one more candle
+        sub_idx = self.replay_df_index.iloc[:min(len(self.replay_df_index), self.replay_idx // 3 + 10)]
+        sub_opt = self.replay_df_option.iloc[:self.replay_idx]
+
+        self.plot_candlesticks(self.index_plot, sub_idx)
+        self.plot_candlesticks(self.option_plot, sub_opt)
+        self.plot_footprint(self.fp_plot, sub_opt)
+
+        trend = self.strategy.get_trend(sub_idx)
+        setup = self.strategy.check_setup(sub_opt, trend)
+
+        if setup:
+            self.info_panel.setText(f"[REPLAY] SIGNAL! BUY Above {setup['entry_price']}")
+            self.add_signal("REPLAY_OPT", "BUY", "TRIGGERED")
+            self.option_plot.addLine(y=setup['entry_price'], pen=pg.mkPen('b', width=2))
+        else:
+            self.info_panel.setText(f"[REPLAY] Stepping... Index: {sub_idx['close'].iloc[-1]:.2f} | Option: {sub_opt['close'].iloc[-1]:.2f}")
+
+        self.replay_idx += 1
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
