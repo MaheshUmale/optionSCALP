@@ -33,81 +33,89 @@ async def get(request: Request):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    try:
-        while True:
-            msg = await websocket.receive_text()
-            data = json.loads(msg)
 
-            if data['type'] == 'fetch_live':
-                index_sym = data['index']
-                idx_df = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=100)
-                if idx_df is not None:
-                    trend = strategy.get_trend(idx_df)
-                    last_spot = idx_df['close'].iloc[-1]
+    async def listen():
+        try:
+            while True:
+                msg = await websocket.receive_text()
+                data = json.loads(msg)
+
+                if data['type'] == 'fetch_live':
+                    index_sym = data['index']
+                    idx_df = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=100)
+                    if idx_df is not None:
+                        trend = strategy.get_trend(idx_df)
+                        last_spot = idx_df['close'].iloc[-1]
+                        strike = dm.get_atm_strike(last_spot)
+                        opt_type = "C" if trend == "BULLISH" else "P"
+                        opt_sym = dm.get_option_symbol(index_sym, strike, opt_type)
+                        opt_df = dm.get_data(opt_sym, interval=Interval.in_5_minute, n_bars=50)
+
+                        await websocket.send_json({
+                            "type": "live_data",
+                            "index_data": idx_df.reset_index().to_dict(orient='records'),
+                            "option_data": opt_df.reset_index().to_dict(orient='records') if opt_df is not None else [],
+                            "trend": trend,
+                            "option_symbol": opt_sym
+                        })
+
+                elif data['type'] == 'start_replay':
+                    index_sym = data['index']
+                    state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=300)
+                    last_spot = state.replay_data_idx['close'].iloc[0]
                     strike = dm.get_atm_strike(last_spot)
-                    opt_type = "C" if trend == "BULLISH" else "P"
-                    opt_sym = dm.get_option_symbol(index_sym, strike, opt_type)
-                    opt_df = dm.get_data(opt_sym, interval=Interval.in_5_minute, n_bars=50)
+                    opt_sym = dm.get_option_symbol(index_sym, strike, "C")
+                    state.replay_data_opt = dm.get_data(opt_sym, interval=Interval.in_1_minute, n_bars=300)
+                    state.replay_idx = 50
+                    state.is_playing = True
 
-                    await websocket.send_json({
-                        "type": "live_data",
-                        "index_data": idx_df.reset_index().to_dict(orient='records'),
-                        "option_data": opt_df.reset_index().to_dict(orient='records') if opt_df is not None else [],
-                        "trend": trend,
-                        "option_symbol": opt_sym
-                    })
+                elif data['type'] == 'pause_replay':
+                    state.is_playing = False
 
-            elif data['type'] == 'start_replay':
-                index_sym = data['index']
-                state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=300)
-                last_spot = state.replay_data_idx['close'].iloc[0]
-                strike = dm.get_atm_strike(last_spot)
-                opt_sym = dm.get_option_symbol(index_sym, strike, "C")
-                state.replay_data_opt = dm.get_data(opt_sym, interval=Interval.in_1_minute, n_bars=300)
-                state.replay_idx = 50
-                state.is_playing = True
+                elif data['type'] == 'step_replay':
+                    if state.replay_data_opt is not None and state.replay_idx < len(state.replay_data_opt):
+                        state.replay_idx += 1
+                        await send_replay_step(websocket)
 
-            elif data['type'] == 'pause_replay':
-                state.is_playing = False
+        except Exception as e:
+            print(f"WS Listen Error: {e}")
 
-            elif data['type'] == 'step_replay':
-                if state.replay_data_opt is not None and state.replay_idx < len(state.replay_data_opt):
-                    state.replay_idx += 1
-                    await send_replay_step(websocket)
+    async def replay_loop():
+        try:
+            while True:
+                if state.is_playing and state.replay_data_opt is not None:
+                    if state.replay_idx < len(state.replay_data_opt):
+                        state.replay_idx += 1
+                        await send_replay_step(websocket)
+                    else:
+                        state.is_playing = False
+                await asyncio.sleep(1) # Replay Speed
+        except Exception as e:
+            print(f"WS Replay Error: {e}")
 
-            if state.is_playing and state.replay_data_opt is not None:
-                if state.replay_idx < len(state.replay_data_opt):
-                    state.replay_idx += 1
-                    await send_replay_step(websocket)
-                    await asyncio.sleep(1) # Replay speed
-
-    except Exception as e:
-        print(f"WS Error: {e}")
+    await asyncio.gather(listen(), replay_loop())
 
 async def send_replay_step(websocket):
-    sub_opt = state.replay_data_opt.iloc[:state.replay_idx]
-    sub_idx = state.replay_data_idx.iloc[:state.replay_idx // 5 + 10]
+    try:
+        sub_opt = state.replay_data_opt.iloc[:state.replay_idx]
+        sub_idx = state.replay_data_idx.iloc[:state.replay_idx // 5 + 10]
 
-    # Strategy check
-    trend = strategy.get_trend(sub_idx)
-    setup = strategy.check_setup(sub_opt, trend)
+        trend = strategy.get_trend(sub_idx)
+        setup = strategy.check_setup(sub_opt, trend)
+        clusters = generate_footprint_clusters(sub_opt.iloc[-1])
 
-    # Footprint data for last candle
-    last_candle = sub_opt.iloc[-1].to_dict()
-    # Mock footprint clusters
-    clusters = generate_footprint_clusters(sub_opt.iloc[-1])
-
-    await websocket.send_json({
-        "type": "replay_step",
-        "index_data": sub_idx.reset_index().to_dict(orient='records'),
-        "option_data": sub_opt.reset_index().to_dict(orient='records'),
-        "footprint": clusters,
-        "signal": setup,
-        "idx": state.replay_idx
-    })
+        await websocket.send_json({
+            "type": "replay_step",
+            "index_data": sub_idx.reset_index().to_dict(orient='records'),
+            "option_data": sub_opt.reset_index().to_dict(orient='records'),
+            "footprint": clusters,
+            "signal": setup,
+            "idx": state.replay_idx
+        })
+    except Exception as e:
+        print(f"Send Error: {e}")
 
 def generate_footprint_clusters(row):
-    # Professional Footprint Data Generation
     price_step = 1.0
     low = (row['low'] // price_step) * price_step
     high = (row['high'] // price_step) * price_step
