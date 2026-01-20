@@ -112,6 +112,11 @@ class ScalpApp(QMainWindow):
         self.details_label.setStyleSheet("background-color: #1a1a1a; padding: 10px; border: 1px solid #333;")
         right_panel.addWidget(self.details_label)
 
+        right_panel.addWidget(QLabel("<b>SYSTEM STATUS</b>"))
+        self.info_panel = QLabel("Status: Ready")
+        self.info_panel.setStyleSheet("font-size: 14px; color: yellow; background-color: black; padding: 5px;")
+        right_panel.addWidget(self.info_panel)
+
         main_layout.addLayout(right_panel, stretch=1)
 
     def toggle_refresh(self):
