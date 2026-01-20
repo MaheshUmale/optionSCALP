@@ -138,7 +138,7 @@ class ScalpApp(QMainWindow):
             last_spot = index_df['close'].iloc[-1]
             strike = self.dm.get_atm_strike(last_spot, step=100 if index_sym=="BANKNIFTY" else 50)
             opt_type = "C" if trend == "BULLISH" else "P"
-            opt_sym = self.dm.get_option_symbol(index_sym, strike, opt_type, "260127")
+            opt_sym = self.dm.get_option_symbol(index_sym, strike, opt_type)
 
             # 3. Option Data
             opt_df = self.dm.get_data(opt_sym, interval=Interval.in_5_minute, n_bars=50)
@@ -212,7 +212,7 @@ class ScalpApp(QMainWindow):
             last_spot = self.replay_df_index['close'].iloc[0]
             strike = self.dm.get_atm_strike(last_spot)
             # Fetch Call option for simulation
-            opt_sym = self.dm.get_option_symbol(index_sym, strike, "C", "260127")
+            opt_sym = self.dm.get_option_symbol(index_sym, strike, "C")
             self.replay_df_option = self.dm.get_data(opt_sym, interval=Interval.in_5_minute, n_bars=100)
 
             if self.replay_df_option is not None:
