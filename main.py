@@ -51,10 +51,19 @@ async def websocket_endpoint(websocket: WebSocket):
                         opt_sym = dm.get_option_symbol(index_sym, strike, opt_type)
                         opt_df = dm.get_data(opt_sym, interval=Interval.in_5_minute, n_bars=50)
 
+                        idx_records = idx_df.reset_index()
+                        idx_records['datetime'] = idx_records['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+
+                        opt_records = []
+                        if opt_df is not None:
+                            opt_records = opt_df.reset_index()
+                            opt_records['datetime'] = opt_records['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+                            opt_records = opt_records.to_dict(orient='records')
+
                         await websocket.send_json({
                             "type": "live_data",
-                            "index_data": idx_df.reset_index().to_dict(orient='records'),
-                            "option_data": opt_df.reset_index().to_dict(orient='records') if opt_df is not None else [],
+                            "index_data": idx_records.to_dict(orient='records'),
+                            "option_data": opt_records,
                             "trend": trend,
                             "option_symbol": opt_sym
                         })
@@ -104,10 +113,16 @@ async def send_replay_step(websocket):
         setup = strategy.check_setup(sub_opt, trend)
         clusters = generate_footprint_clusters(sub_opt.iloc[-1])
 
+        idx_recs = sub_idx.reset_index()
+        idx_recs['datetime'] = idx_recs['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+
+        opt_recs = sub_opt.reset_index()
+        opt_recs['datetime'] = opt_recs['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+
         await websocket.send_json({
             "type": "replay_step",
-            "index_data": sub_idx.reset_index().to_dict(orient='records'),
-            "option_data": sub_opt.reset_index().to_dict(orient='records'),
+            "index_data": idx_recs.to_dict(orient='records'),
+            "option_data": opt_recs.to_dict(orient='records'),
             "footprint": clusters,
             "signal": setup,
             "idx": state.replay_idx
