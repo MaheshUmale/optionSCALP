@@ -30,9 +30,10 @@ function initCharts() {
 
 ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
-    console.log("Msg:", data.type);
 
     if (data.type === 'live_data' || data.type === 'replay_step') {
+        let currentOptTime = null;
+
         if (data.index_data && data.index_data.length > 0) {
             const idxData = data.index_data.map(d => ({
                 time: new Date(d.datetime).getTime() / 1000,
@@ -47,36 +48,39 @@ ws.onmessage = (event) => {
                 open: d.open, high: d.high, low: d.low, close: d.close
             }));
             optSeries.setData(optData);
+            currentOptTime = optData[optData.length-1].time;
         }
 
         if (data.footprint) {
             updateFootprint(data.footprint);
         }
 
-        if (data.signal) {
+        if (data.signal && currentOptTime) {
+            optSeries.setMarkers([{
+                time: currentOptTime,
+                position: "belowBar",
+                color: "#2196F3",
+                shape: "arrowUp",
+                text: "BUY SIGNAL"
+            }]);
             updateSignal(data.signal);
         }
 
-        document.getElementById('status').innerText = `Status: Active | Opt: ${data.option_symbol || 'REPLAY'}`;
+        document.getElementById('status').innerText = `Status: Connected | Sym: ${data.option_symbol || 'REPLAY'}`;
     }
 };
 
-ws.onopen = () => { console.log("WS Connected"); document.getElementById('status').innerText = "Status: Connected"; };
-ws.onerror = (e) => { console.error("WS Error", e); };
+ws.onopen = () => { document.getElementById('status').innerText = "Status: Connected"; };
 
 function updateFootprint(clusters) {
     const container = document.getElementById('footprint-container');
     container.innerHTML = '';
-
     clusters.sort((a,b) => b.price - a.price);
-
     clusters.forEach(c => {
         const row = document.createElement('div');
         row.className = 'fp-row';
-
         const buyImbalance = c.buy > c.sell * 3;
         const sellImbalance = c.sell > c.buy * 3;
-
         row.innerHTML = `
             <div class="fp-price">${c.price.toFixed(1)}</div>
             <div class="fp-sell ${sellImbalance ? 'imbalance' : ''}">${c.sell}</div>
@@ -89,32 +93,13 @@ function updateFootprint(clusters) {
 function updateSignal(sig) {
     const list = document.getElementById('signals-list');
     const div = document.createElement('div');
-    div.className = 'signal-item';
     div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>BUY</b> @ ${sig.entry_price} (SL: ${sig.sl})`;
     list.prepend(div);
-
-    document.getElementById('trade-info').innerHTML = `
-        <span style="color:#2962ff">ACTIVE SIGNAL</span><br>
-        ENTRY: ${sig.entry_price}<br>
-        SL: ${sig.sl}<br>
-        T1: ${sig.entry_price + 30}
-    `;
 }
 
-function fetchLive() {
-    ws.send(JSON.stringify({ type: 'fetch_live', index: document.getElementById('index-select').value }));
-}
-
-function startReplay() {
-    ws.send(JSON.stringify({ type: 'start_replay', index: document.getElementById('index-select').value }));
-}
-
-function pauseReplay() {
-    ws.send(JSON.stringify({ type: 'pause_replay' }));
-}
-
-function stepReplay() {
-    ws.send(JSON.stringify({ type: 'step_replay' }));
-}
+function fetchLive() { ws.send(JSON.stringify({ type: 'fetch_live', index: document.getElementById('index-select').value })); }
+function startReplay() { ws.send(JSON.stringify({ type: 'start_replay', index: document.getElementById('index-select').value })); }
+function pauseReplay() { ws.send(JSON.stringify({ type: 'pause_replay' })); }
+function stepReplay() { ws.send(JSON.stringify({ type: 'step_replay' })); }
 
 window.onload = initCharts;
