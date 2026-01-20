@@ -1,23 +1,29 @@
-import plotly.graph_objects as go
-import pandas as pd
+import pyqtgraph as pg
+from PyQt6 import QtCore, QtGui
 
-def create_candlestick_chart(df, title="Candlestick Chart", signals=None):
-    fig = go.Figure(data=[go.Candlestick(x=df.index,
-                open=df['open'],
-                high=df['high'],
-                low=df['low'],
-                close=df['close'],
-                name='Price')])
+class CandlestickItem(pg.GraphicsObject):
+    def __init__(self, data):
+        pg.GraphicsObject.__init__(self)
+        self.data = data  # [ (time, open, close, low, high), ... ]
+        self.generatePicture()
 
-    if signals:
-        for signal in signals:
-            fig.add_trace(go.Scatter(
-                x=[signal['time']],
-                y=[signal['price']],
-                mode='markers',
-                marker=dict(symbol='triangle-up', size=10, color='blue'),
-                name='Signal'
-            ))
+    def generatePicture(self):
+        self.picture = QtGui.QPicture()
+        p = QtGui.QPainter(self.picture)
+        p.setPen(pg.mkPen('w'))
+        w = 0.6
+        for t, open, close, low, high in self.data:
+            if open > close:
+                p.setBrush(pg.mkBrush('r'))
+            else:
+                p.setBrush(pg.mkBrush('g'))
 
-    fig.update_layout(title=title, xaxis_rangeslider_visible=False)
-    return fig
+            p.drawLine(QtCore.QPointF(t, low), QtCore.QPointF(t, high))
+            p.drawRect(QtCore.QRectF(t-w/2, open, w, close-open))
+        p.end()
+
+    def paint(self, p, *args):
+        p.drawPicture(0, 0, self.picture)
+
+    def boundingRect(self):
+        return QtCore.QRectF(self.picture.boundingRect())
