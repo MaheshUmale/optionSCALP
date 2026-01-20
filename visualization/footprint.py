@@ -55,7 +55,8 @@ class FootprintItem(pg.GraphicsObject):
                 # Text: "Buy | Sell"
                 p.setPen(pg.mkPen('w'))
                 text = f"{buy_v}|{sell_v}"
-                p.drawText(rect, QtCore.Qt.AlignmentFlag.AlignCenter, text)
+                # Use Center alignment
+                p.drawText(rect, QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignVCenter, text)
 
                 current_price += self.price_step
 

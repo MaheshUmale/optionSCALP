@@ -83,7 +83,7 @@ class ScalpApp(QMainWindow):
         right_panel = QVBoxLayout()
         right_panel.addWidget(QLabel("<b>ACTIVE SIGNALS</b>"))
         self.signal_table = QTableWidget(0, 4)
-        self.signal_table.setHorizontalLabels(["Time", "Symbol", "Type", "Status"])
+        self.signal_table.setHorizontalHeaderLabels(["Time", "Symbol", "Type", "Status"])
         self.signal_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         right_panel.addWidget(self.signal_table)
 
