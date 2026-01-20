@@ -29,42 +29,52 @@ class FootprintItem(pg.GraphicsObject):
 
             current_price = (low // self.price_step) * self.price_step
             while current_price < high:
-                rect = QtCore.QRectF(i - w/2, current_price, w, self.price_step)
+                rect_left = QtCore.QRectF(i - w/2, current_price, w/2, self.price_step)
+                rect_right = QtCore.QRectF(i, current_price, w/2, self.price_step)
 
-                # Enhanced visual logic for footprint
+                # Order Flow Logic
                 mid = (row['open'] + row['close']) / 2
                 dist = np.exp(-((current_price - mid) / (max(row['high'] - row['low'], 1)))**2)
                 vol_at_price = int(row['volume'] * dist / 5)
 
-                level_delta = int(vol_at_price * (1 if row['close'] > row['open'] else -1) * 0.2)
+                level_delta = int(vol_at_price * (1 if row['close'] > row['open'] else -1) * 0.3)
                 buy_v = max(0, (vol_at_price + level_delta) // 2)
                 sell_v = max(0, (vol_at_price - level_delta) // 2)
 
-                # Imbalance coloring
-                # If Buy Vol > 2x Sell Vol -> Strong Green
-                # If Sell Vol > 2x Buy Vol -> Strong Red
-                if buy_v > 2 * sell_v and buy_v > 0:
-                    p.setBrush(pg.mkBrush(0, 255, 0, 180))
-                elif sell_v > 2 * buy_v and sell_v > 0:
-                    p.setBrush(pg.mkBrush(255, 0, 0, 180))
-                elif buy_v > sell_v:
-                    p.setBrush(pg.mkBrush(0, 200, 0, 80))
-                else:
-                    p.setBrush(pg.mkBrush(200, 0, 0, 80))
+                # Split-Cell Coloring
+                # Left side (Sellers)
+                s_alpha = min(255, 40 + int(sell_v / 50))
+                p.setBrush(pg.mkBrush(255, 0, 0, s_alpha))
+                p.setPen(pg.mkPen(255, 255, 255, 20))
+                p.drawRect(rect_left)
 
-                p.setPen(pg.mkPen(255, 255, 255, 40))
-                p.drawRect(rect)
+                # Right side (Buyers)
+                b_alpha = min(255, 40 + int(buy_v / 50))
+                p.setBrush(pg.mkBrush(0, 255, 0, b_alpha))
+                p.drawRect(rect_right)
 
-                # Value Area Highlight
-                if row['low'] <= current_price <= row['high']:
-                    if abs(current_price - mid) < self.price_step:
-                        p.setPen(pg.mkPen(255, 255, 0, 200, width=1))
-                        p.drawRect(rect)
+                # Strong Imbalance Highlight
+                if buy_v > 3 * sell_v and buy_v > 10:
+                    p.setPen(pg.mkPen(255, 255, 255, 200, width=2))
+                    p.drawRect(rect_right)
+                elif sell_v > 3 * buy_v and sell_v > 10:
+                    p.setPen(pg.mkPen(255, 255, 255, 200, width=2))
+                    p.drawRect(rect_left)
 
-                # Text: "Buy | Sell"
+                # POC Highlight
+                if abs(current_price - mid) < self.price_step:
+                    p.setPen(pg.mkPen(255, 255, 0, 255, width=1))
+                    p.drawLine(QtCore.QPointF(i-w/2, current_price), QtCore.QPointF(i+w/2, current_price))
+
+                # Numerical values
                 p.setPen(pg.mkPen('w'))
-                text = f"{buy_v} | {sell_v}"
-                p.drawText(rect, QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignVCenter, text)
+                p.drawText(rect_left, QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignVCenter, str(sell_v))
+                p.drawText(rect_right, QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignVCenter, str(buy_v))
+
+                # Reset font
+                f = p.font()
+                f.setBold(False)
+                p.setFont(f)
 
                 current_price += self.price_step
 
