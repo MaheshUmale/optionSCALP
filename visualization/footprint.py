@@ -19,43 +19,51 @@ class FootprintItem(pg.GraphicsObject):
         w = 0.9 # Width of candle
 
         for i, row in self.df.iterrows():
-            # Candle boundaries
             low = row['low']
             high = row['high']
 
-            # Start from lowest price step and go up
+            # Draw a light border for the whole candle area
+            p.setPen(pg.mkPen(255, 255, 255, 30))
+            p.setBrush(pg.mkBrush(0, 0, 0, 0))
+            p.drawRect(QtCore.QRectF(i - w/2, low, w, high - low))
+
             current_price = (low // self.price_step) * self.price_step
-            while current_price <= high:
+            while current_price < high:
                 rect = QtCore.QRectF(i - w/2, current_price, w, self.price_step)
 
-                # Simulate volume bifurcation per price level
-                # Since we don't have real tick data, we use a distribution
-                # centered around (open+close)/2
+                # Enhanced visual logic for footprint
                 mid = (row['open'] + row['close']) / 2
-                dist = np.exp(-((current_price - mid) / (row['high'] - row['low'] + 1))**2)
-                vol_at_price = int(row['volume'] * dist / 5) # simplified
+                dist = np.exp(-((current_price - mid) / (max(row['high'] - row['low'], 1)))**2)
+                vol_at_price = int(row['volume'] * dist / 5)
 
-                # Delta proxy for this level
                 level_delta = int(vol_at_price * (1 if row['close'] > row['open'] else -1) * 0.2)
-
                 buy_v = max(0, (vol_at_price + level_delta) // 2)
                 sell_v = max(0, (vol_at_price - level_delta) // 2)
 
-                # Color coding
-                if buy_v > sell_v:
-                    alpha = min(255, 50 + buy_v)
-                    p.setBrush(pg.mkBrush(0, 255, 0, alpha // 2))
+                # Imbalance coloring
+                # If Buy Vol > 2x Sell Vol -> Strong Green
+                # If Sell Vol > 2x Buy Vol -> Strong Red
+                if buy_v > 2 * sell_v and buy_v > 0:
+                    p.setBrush(pg.mkBrush(0, 255, 0, 180))
+                elif sell_v > 2 * buy_v and sell_v > 0:
+                    p.setBrush(pg.mkBrush(255, 0, 0, 180))
+                elif buy_v > sell_v:
+                    p.setBrush(pg.mkBrush(0, 200, 0, 80))
                 else:
-                    alpha = min(255, 50 + sell_v)
-                    p.setBrush(pg.mkBrush(255, 0, 0, alpha // 2))
+                    p.setBrush(pg.mkBrush(200, 0, 0, 80))
 
-                p.setPen(pg.mkPen(255, 255, 255, 20))
+                p.setPen(pg.mkPen(255, 255, 255, 40))
                 p.drawRect(rect)
+
+                # Value Area Highlight
+                if row['low'] <= current_price <= row['high']:
+                    if abs(current_price - mid) < self.price_step:
+                        p.setPen(pg.mkPen(255, 255, 0, 200, width=1))
+                        p.drawRect(rect)
 
                 # Text: "Buy | Sell"
                 p.setPen(pg.mkPen('w'))
-                text = f"{buy_v}|{sell_v}"
-                # Use Center alignment
+                text = f"{buy_v} | {sell_v}"
                 p.drawText(rect, QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignVCenter, text)
 
                 current_price += self.price_step

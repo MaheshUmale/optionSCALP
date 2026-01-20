@@ -13,7 +13,25 @@ class DataManager:
     def get_atm_strike(self, spot_price, step=100):
         return round(spot_price / step) * step
 
-    def get_option_symbol(self, index="BANKNIFTY", strike=58400, type="C", expiry="260127"):
+    def get_next_expiry(self, index="BANKNIFTY"):
+        from datetime import datetime, timedelta
+        # Current date in simulation is Jan 20, 2026
+        today = datetime(2026, 1, 20)
+
+        # Bank Nifty: Wednesday (weekday 2)
+        # Nifty: Thursday (weekday 3)
+        target_weekday = 2 if "BANKNIFTY" in index else 3
+
+        days_ahead = target_weekday - today.weekday()
+        if days_ahead < 0: # Target already passed this week
+            days_ahead += 7
+
+        expiry_date = today + timedelta(days_ahead)
+        return expiry_date.strftime("%y%m%d")
+
+    def get_option_symbol(self, index="BANKNIFTY", strike=58400, type="C", expiry=None):
+        if expiry is None:
+            expiry = self.get_next_expiry(index)
         # Format: BANKNIFTY260127C58400
         return f"{index}{expiry}{type}{strike}"
 
