@@ -165,12 +165,6 @@ class ScalpApp(QMainWindow):
         item = FootprintItem(df_tail, price_step=2 if "NIFTY" in self.index_combo.currentText() else 5)
         plot_widget.addItem(item)
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = ScalpApp()
-    window.showMaximized()
-    sys.exit(app.exec())
-
     def run_backtest(self):
         index_sym = self.index_combo.currentText()
         df = self.dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=500)
@@ -183,3 +177,9 @@ if __name__ == "__main__":
                 if setup:
                     results.append(f"Time: {i}, Signal: BUY")
             self.bt_report.setText("<br>".join(results) if results else "No signals found in history.")
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = ScalpApp()
+    window.showMaximized()
+    sys.exit(app.exec())
