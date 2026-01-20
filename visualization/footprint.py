@@ -40,31 +40,45 @@ class FootprintItem(pg.GraphicsObject):
                 buy_v = max(0, (vol_at_price + level_delta) // 2)
                 sell_v = max(0, (vol_at_price - level_delta) // 2)
 
-                # Imbalance coloring
-                # If Buy Vol > 2x Sell Vol -> Strong Green
-                # If Sell Vol > 2x Buy Vol -> Strong Red
-                if buy_v > 2 * sell_v and buy_v > 0:
-                    p.setBrush(pg.mkBrush(0, 255, 0, 180))
-                elif sell_v > 2 * buy_v and sell_v > 0:
-                    p.setBrush(pg.mkBrush(255, 0, 0, 180))
-                elif buy_v > sell_v:
-                    p.setBrush(pg.mkBrush(0, 200, 0, 80))
-                else:
-                    p.setBrush(pg.mkBrush(200, 0, 0, 80))
+                # Imbalance coloring and heat intensity
+                total_v = buy_v + sell_v
+                intensity = min(200, 50 + int(total_v / 100))
 
-                p.setPen(pg.mkPen(255, 255, 255, 40))
+                if buy_v > 2 * sell_v and buy_v > 0:
+                    p.setBrush(pg.mkBrush(0, 255, 0, 200)) # Aggressive Buy
+                    p.setPen(pg.mkPen(255, 255, 255, 150, width=1))
+                elif sell_v > 2 * buy_v and sell_v > 0:
+                    p.setBrush(pg.mkBrush(255, 0, 0, 200)) # Aggressive Sell
+                    p.setPen(pg.mkPen(255, 255, 255, 150, width=1))
+                elif buy_v > sell_v:
+                    p.setBrush(pg.mkBrush(0, 150, 0, intensity))
+                    p.setPen(pg.mkPen(255, 255, 255, 30))
+                else:
+                    p.setBrush(pg.mkBrush(150, 0, 0, intensity))
+                    p.setPen(pg.mkPen(255, 255, 255, 30))
+
                 p.drawRect(rect)
 
-                # Value Area Highlight
-                if row['low'] <= current_price <= row['high']:
-                    if abs(current_price - mid) < self.price_step:
-                        p.setPen(pg.mkPen(255, 255, 0, 200, width=1))
-                        p.drawRect(rect)
+                # Highlight Point of Control (POC) for the candle
+                if abs(current_price - mid) < self.price_step:
+                    p.setPen(pg.mkPen(255, 255, 0, 255, width=2))
+                    p.drawRect(rect)
 
-                # Text: "Buy | Sell"
+                # Numerical values with contrast
                 p.setPen(pg.mkPen('w'))
-                text = f"{buy_v} | {sell_v}"
+                text = f"{buy_v} × {sell_v}"
+                # Use a slightly larger/bolder font for imbalances
+                if buy_v > 2 * sell_v or sell_v > 2 * buy_v:
+                    f = p.font()
+                    f.setBold(True)
+                    p.setFont(f)
+
                 p.drawText(rect, QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignVCenter, text)
+
+                # Reset font
+                f = p.font()
+                f.setBold(False)
+                p.setFont(f)
 
                 current_price += self.price_step
 

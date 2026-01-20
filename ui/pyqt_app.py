@@ -44,6 +44,12 @@ class ScalpApp(QMainWindow):
         self.refresh_btn.clicked.connect(self.toggle_refresh)
         ctrl_layout.addWidget(self.refresh_btn)
 
+        self.manual_expiry = QComboBox()
+        self.manual_expiry.setEditable(True)
+        self.manual_expiry.addItems(["Auto", "260120", "260121", "260127"])
+        ctrl_layout.addWidget(QLabel("Expiry:"))
+        ctrl_layout.addWidget(self.manual_expiry)
+
         chart_layout.addLayout(ctrl_layout)
 
         # Tabs
@@ -143,7 +149,10 @@ class ScalpApp(QMainWindow):
             last_spot = index_df['close'].iloc[-1]
             strike = self.dm.get_atm_strike(last_spot, step=100 if index_sym=="BANKNIFTY" else 50)
             opt_type = "C" if trend == "BULLISH" else "P"
-            opt_sym = self.dm.get_option_symbol(index_sym, strike, opt_type)
+
+            exp_val = self.manual_expiry.currentText()
+            expiry = None if exp_val == "Auto" else exp_val
+            opt_sym = self.dm.get_option_symbol(index_sym, strike, opt_type, expiry=expiry)
 
             # 3. Option Data
             opt_df = self.dm.get_data(opt_sym, interval=Interval.in_5_minute, n_bars=50)

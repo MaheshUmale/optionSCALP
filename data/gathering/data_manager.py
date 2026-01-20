@@ -18,9 +18,10 @@ class DataManager:
         # Current date in simulation is Jan 20, 2026
         today = datetime(2026, 1, 20)
 
-        # Bank Nifty: Wednesday (weekday 2)
-        # Nifty: Thursday (weekday 3)
-        target_weekday = 2 if "BANKNIFTY" in index else 3
+        # Based on user feedback and examples:
+        # Jan 20 (Tuesday) and Jan 27 (Tuesday) appear to be the target expiries.
+        # So we use Tuesday (weekday 1) for both.
+        target_weekday = 1
 
         days_ahead = target_weekday - today.weekday()
         if days_ahead < 0: # Target already passed this week
