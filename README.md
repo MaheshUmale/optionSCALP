@@ -29,16 +29,23 @@ A professional-grade quantitative trading system for Nifty and Bank Nifty option
 
 ## How to Run
 
-1. **Set up Python Path:**
-   Ensure the project root is in your `PYTHONPATH`.
-   ```bash
-   export PYTHONPATH=$PYTHONPATH:.
-   ```
+### Windows (Command Prompt)
+```cmd
+set PYTHONPATH=%PYTHONPATH%;.
+python main.py
+```
 
-2. **Launch the Dashboard:**
-   ```bash
-   python main.py
-   ```
+### Windows (PowerShell)
+```powershell
+$env:PYTHONPATH += ";."
+python main.py
+```
+
+### Linux / macOS (Terminal)
+```bash
+export PYTHONPATH=$PYTHONPATH:.
+python main.py
+```
 
 ## Usage Instructions
 1. **Refresh Data:** Click the "Refresh Market Data" button to fetch the latest bars.
@@ -56,4 +63,3 @@ A professional-grade quantitative trading system for Nifty and Bank Nifty option
 
 ## Disclaimer
 This system is for educational and research purposes only. Trading options involves significant risk. Always test thoroughly in a simulated environment before using real capital.
- 
