@@ -1,6 +1,7 @@
+fastapi
+uvicorn
+websockets
 pandas
-pyqtgraph
-PyQt6
 numpy
 git+https://github.com/rongardF/tvdatafeed.git
-matplotlib
+jinja2

@@ -1,0 +1,120 @@
+const ws = new WebSocket(`ws://${window.location.host}/ws`);
+
+let idxChart, optChart, idxSeries, optSeries;
+
+function initCharts() {
+    const chartOptions = {
+        layout: { background: { color: '#0c0d10' }, textColor: '#d1d4dc' },
+        grid: { vertLines: { color: '#1a1b22' }, horzLines: { color: '#1a1b22' } },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        timeScale: { borderColor: '#2b2b3b', timeVisible: true, secondsVisible: false }
+    };
+
+    idxChart = LightweightCharts.createChart(document.getElementById('index-chart'), chartOptions);
+    optChart = LightweightCharts.createChart(document.getElementById('option-chart'), chartOptions);
+
+    idxSeries = idxChart.addCandlestickSeries({
+        upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+        wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+    });
+    optSeries = optChart.addCandlestickSeries({
+        upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+        wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+    });
+
+    window.addEventListener('resize', () => {
+        idxChart.resize(document.getElementById('index-chart').clientWidth, document.getElementById('index-chart').clientHeight);
+        optChart.resize(document.getElementById('option-chart').clientWidth, document.getElementById('option-chart').clientHeight);
+    });
+}
+
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Msg:", data.type);
+
+    if (data.type === 'live_data' || data.type === 'replay_step') {
+        if (data.index_data && data.index_data.length > 0) {
+            const idxData = data.index_data.map(d => ({
+                time: new Date(d.datetime).getTime() / 1000,
+                open: d.open, high: d.high, low: d.low, close: d.close
+            }));
+            idxSeries.setData(idxData);
+        }
+
+        if (data.option_data && data.option_data.length > 0) {
+            const optData = data.option_data.map(d => ({
+                time: new Date(d.datetime).getTime() / 1000,
+                open: d.open, high: d.high, low: d.low, close: d.close
+            }));
+            optSeries.setData(optData);
+        }
+
+        if (data.footprint) {
+            updateFootprint(data.footprint);
+        }
+
+        if (data.signal) {
+            updateSignal(data.signal);
+        }
+
+        document.getElementById('status').innerText = `Status: Active | Opt: ${data.option_symbol || 'REPLAY'}`;
+    }
+};
+
+ws.onopen = () => { console.log("WS Connected"); document.getElementById('status').innerText = "Status: Connected"; };
+ws.onerror = (e) => { console.error("WS Error", e); };
+
+function updateFootprint(clusters) {
+    const container = document.getElementById('footprint-container');
+    container.innerHTML = '';
+
+    clusters.sort((a,b) => b.price - a.price);
+
+    clusters.forEach(c => {
+        const row = document.createElement('div');
+        row.className = 'fp-row';
+
+        const buyImbalance = c.buy > c.sell * 3;
+        const sellImbalance = c.sell > c.buy * 3;
+
+        row.innerHTML = `
+            <div class="fp-price">${c.price.toFixed(1)}</div>
+            <div class="fp-sell ${sellImbalance ? 'imbalance' : ''}">${c.sell}</div>
+            <div class="fp-buy ${buyImbalance ? 'imbalance' : ''}">${c.buy}</div>
+        `;
+        container.appendChild(row);
+    });
+}
+
+function updateSignal(sig) {
+    const list = document.getElementById('signals-list');
+    const div = document.createElement('div');
+    div.className = 'signal-item';
+    div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>BUY</b> @ ${sig.entry_price} (SL: ${sig.sl})`;
+    list.prepend(div);
+
+    document.getElementById('trade-info').innerHTML = `
+        <span style="color:#2962ff">ACTIVE SIGNAL</span><br>
+        ENTRY: ${sig.entry_price}<br>
+        SL: ${sig.sl}<br>
+        T1: ${sig.entry_price + 30}
+    `;
+}
+
+function fetchLive() {
+    ws.send(JSON.stringify({ type: 'fetch_live', index: document.getElementById('index-select').value }));
+}
+
+function startReplay() {
+    ws.send(JSON.stringify({ type: 'start_replay', index: document.getElementById('index-select').value }));
+}
+
+function pauseReplay() {
+    ws.send(JSON.stringify({ type: 'pause_replay' }));
+}
+
+function stepReplay() {
+    ws.send(JSON.stringify({ type: 'step_replay' }));
+}
+
+window.onload = initCharts;

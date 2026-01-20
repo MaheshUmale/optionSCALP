@@ -1,0 +1,85 @@
+body {
+    margin: 0;
+    background-color: #0c0d10;
+    color: #e0e0e0;
+    font-family: 'Consolas', monospace;
+    overflow: hidden;
+}
+
+.top-bar {
+    height: 50px;
+    background: #1e222d;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    justify-content: space-between;
+    border-bottom: 1px solid #333;
+}
+
+.brand { font-size: 20px; font-weight: bold; color: #2962ff; }
+.status { color: #ffeb3b; }
+
+.main-container {
+    display: flex;
+    height: calc(100vh - 50px);
+}
+
+.chart-section {
+    flex: 3;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+}
+
+.chart-box {
+    flex: 1;
+    margin-bottom: 10px;
+    background: #131722;
+    border-radius: 4px;
+    position: relative;
+}
+
+.side-panel {
+    flex: 1;
+    background: #1e222d;
+    border-left: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    overflow-y: auto;
+}
+
+.panel-header {
+    background: #2a2e39;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: bold;
+    margin-top: 10px;
+    border-left: 3px solid #2962ff;
+}
+
+.footprint-view {
+    flex: 2;
+    background: #000;
+    margin-top: 5px;
+    display: flex;
+    flex-direction: column-reverse;
+    font-size: 11px;
+}
+
+.fp-row {
+    display: flex;
+    border-bottom: 1px solid #222;
+    height: 18px;
+    align-items: center;
+}
+
+.fp-price { width: 60px; color: #888; text-align: right; padding-right: 5px; }
+.fp-sell { flex: 1; background: #311b1b; text-align: center; color: #ff5252; }
+.fp-buy { flex: 1; background: #1b3121; text-align: center; color: #4caf50; }
+.fp-buy.imbalance { background: #1b5e20; font-weight: bold; color: #fff; }
+.fp-sell.imbalance { background: #b71c1c; font-weight: bold; color: #fff; }
+.fp-poc { border-top: 1px solid #ffeb3b; border-bottom: 1px solid #ffeb3b; }
+
+.signals-view { flex: 1; padding: 5px; font-size: 12px; color: #00ff00; }
+.trade-info { padding: 10px; font-size: 14px; color: #fff; }
