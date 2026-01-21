@@ -151,6 +151,10 @@ ws.onmessage = (event) => {
         updateDeltaSignal(data.delta_signals);
     }
 
+    if (data.pcr_insights) {
+        updatePCRInsights(data.pcr_insights);
+    }
+
     if (data.type === 'marker_update') {
         if (data.is_ce) ceSeries.setMarkers([...ceSeries.markers() || [], data.marker]);
         if (data.is_pe) peSeries.setMarkers([...peSeries.markers() || [], data.marker]);
@@ -177,6 +181,15 @@ function updateDeltaSignal(sig) {
     div.style.borderLeft = `4px solid ${color}`;
     div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>${sig.type}</b> (Delta: ${sig.net_delta.toFixed(0)})<br>Strikes: ${sig.strikes.join(', ')}`;
     list.prepend(div);
+}
+
+function updatePCRInsights(pcr) {
+    const statusEl = document.getElementById('status');
+    const parts = statusEl.innerText.split('|');
+    const currentText = parts[0];
+    const trendText = parts[1] || "";
+    const buildup = pcr.buildup_status ? ` | ${pcr.buildup_status}` : "";
+    statusEl.innerHTML = `${currentText} | ${trendText} | PCR: ${pcr.pcr} (${pcr.pcr_change > 1 ? '▲' : '▼'})${buildup}`;
 }
 
 function fetchLive() { ws.send(JSON.stringify({ type: 'fetch_live', index: document.getElementById('index-select').value })); }
