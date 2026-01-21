@@ -266,11 +266,6 @@ async def send_replay_step(websocket, state):
     ce_recs = format_records(sub_ce)
     pe_recs = format_records(sub_pe)
 
-    if ce_setup:
-        state.ce_markers.append({"time": ce_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "CE BUY"})
-    if pe_setup:
-        state.pe_markers.append({"time": pe_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "PE BUY"})
-
     msg = {
         "type": "replay_step",
         "index_data": format_records(sub_idx),
@@ -283,6 +278,17 @@ async def send_replay_step(websocket, state):
         "trend": trend,
         "max_idx": min(len(state.replay_data_ce), len(state.replay_data_pe))
     }
+
+    if ce_setup:
+        marker = {"time": ce_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "CE BUY"}
+        state.ce_markers.append(marker)
+        msg["ce_markers"] = state.ce_markers
+        msg["signal"] = ce_setup
+    if pe_setup:
+        marker = {"time": pe_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "PE BUY"}
+        state.pe_markers.append(marker)
+        msg["pe_markers"] = state.pe_markers
+        msg["signal"] = pe_setup
 
     cleaned = clean_json(msg)
     await websocket.send_json(cleaned)

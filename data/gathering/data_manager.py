@@ -38,13 +38,12 @@ class DataManager:
         if expiry is None:
             expiry = self.get_next_expiry(index)
 
-        # Try to match the exact format expected by TradingView for NSE options
-        # Often it is SYMBOL + YY + MMM (short month) + DD + C/P + STRIKE
-        # But based on your first prompt: BANKNIFTY260127C58400
-        # Let's stick to SYMBOL + YY + MM + DD + C/P + STRIKE
+        # Correct TradingView NSE Option Symbol format: (INDEX)(YYMMDD)(C/P)(STRIKE)
+        # opt_type should be "C" or "P"
+        type_code = opt_type[0].upper() # Handle "CE"->"C", "PE"->"P"
 
-        sym = f"{index}{expiry}{opt_type}{int(strike)}"
-        print(f"Generated option symbol: {sym}")
+        sym = f"{index}{expiry}{type_code}{int(strike)}"
+        print(f"Generated option symbol for TV: {sym}")
         return sym
 
     def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100):
