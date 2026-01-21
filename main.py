@@ -8,7 +8,11 @@ import json
 import asyncio
 import pandas as pd
 import numpy as np
+import logging
 from datetime import datetime
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 from data.gathering.tv_feed import TvFeed
 from core.strategies.trend_following import TrendFollowingStrategy
 from tvDatafeed import Interval
@@ -87,14 +91,16 @@ async def get(request: Request):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    logger.info("WebSocket accepted")
     state = SessionState()
 
     async def listen_task():
+        logger.info("Listen task started")
         try:
             while True:
                 try:
                     msg = await websocket.receive_text()
-                    # print(f"Received message: {msg}")
+                    logger.info(f"Received message: {msg}")
                     data = json.loads(msg)
                 except WebSocketDisconnect:
                     print("WebSocket disconnected")
@@ -127,7 +133,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
 
                 elif data['type'] == 'start_replay':
-                    # print(f"Starting replay for {data['index']}")
+                    logger.info(f"Starting replay for {data['index']}")
                     index_sym = data['index']
                     strategy.update_params(index_sym)
                     # Use a larger window for index to have history
@@ -165,7 +171,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         state.replay_idx += 1
                         await send_replay_step(websocket, state)
         except Exception as e:
-            print(f"Listen Error: {e}")
+            logger.exception("Listen Error")
 
     async def replay_loop():
         try:
@@ -190,7 +196,7 @@ def format_records(df):
 
 async def send_replay_step(websocket, state):
     if websocket.client_state != WebSocketState.CONNECTED: return
-
+    logger.info(f"Sending replay step {state.replay_idx}")
     sub_opt = state.replay_data_opt.iloc[:state.replay_idx]
 
     # Synchronize index data based on timestamp of the last option candle
