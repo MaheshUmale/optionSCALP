@@ -162,7 +162,10 @@ function updateSignal(sig) {
     const list = document.getElementById('signals-list');
     const div = document.createElement('div');
     div.className = 'signal-item';
-    div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>BUY</b> @ ${sig.entry_price} (SL: ${sig.sl})`;
+    const type = sig.type || "BUY";
+    const color = type.includes("CE") ? "#26a69a" : (type.includes("PE") ? "#ef5350" : "#2196F3");
+    div.style.borderLeft = `4px solid ${color}`;
+    div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>${type}</b> @ ${sig.entry_price} (SL: ${sig.sl})`;
     list.prepend(div);
 }
 
@@ -180,6 +183,7 @@ function fetchLive() { ws.send(JSON.stringify({ type: 'fetch_live', index: docum
 function startReplay() { ws.send(JSON.stringify({ type: 'start_replay', index: document.getElementById('index-select').value })); }
 function pauseReplay() { ws.send(JSON.stringify({ type: 'pause_replay' })); }
 function stepReplay() { ws.send(JSON.stringify({ type: 'step_replay' })); }
+function setReplaySpeed(val) { ws.send(JSON.stringify({ type: 'set_replay_speed', speed: parseFloat(val) })); }
 function onSliderChange(val) { ws.send(JSON.stringify({ type: 'set_replay_index', index: parseInt(val) })); }
 
 window.onload = initCharts;

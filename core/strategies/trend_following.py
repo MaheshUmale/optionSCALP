@@ -14,14 +14,19 @@ class TrendFollowingStrategy:
         sma = index_df['close'].rolling(20).mean().iloc[-1]
         return "BULLISH" if last_close > sma else "BEARISH"
 
-    def check_setup(self, option_df, trend):
+    def check_setup(self, option_df, trend, option_type):
         """
         On Option Chart:
         - Trend is BULLISH (Index) -> Look at CALL option
+        - Trend is BEARISH (Index) -> Look at PUT option
         - Wait for Small Bearish Candle (Pullback)
         - Body > 70%, Range 30-40
         """
         if option_df is None or option_df.empty: return None
+
+        # Balanced Approach: Only trade CE on Bullish Trend and PE on Bearish Trend
+        if trend == "BULLISH" and option_type != "CE": return None
+        if trend == "BEARISH" and option_type != "PE": return None
 
         last_candle = option_df.iloc[-1]
         is_bearish = last_candle['close'] < last_candle['open']
@@ -31,7 +36,7 @@ class TrendFollowingStrategy:
         if is_bearish and self.target_range[0] <= candle_range <= self.target_range[1] + 5:
             if body_size >= 0.7 * candle_range:
                 return {
-                    "type": "ENTRY",
+                    "type": f"{option_type}_ENTRY",
                     "entry_price": last_candle['high'] + 1,
                     "sl": last_candle['low']
                 }

@@ -10,7 +10,6 @@ import asyncio
 import numpy as np
 import logging
 from datetime import datetime, timedelta, timezone
-import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,6 +33,7 @@ tl_client = TrendlyneClient()
 class SessionState:
     def __init__(self):
         self.replay_idx = 0
+        self.replay_speed = 0.5
         self.replay_data_idx = None
         self.replay_data_ce = None
         self.replay_data_pe = None
@@ -93,8 +93,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
 
-                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
-                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P")
+                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "CE")
+                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "PE")
 
                     ce_df = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
                     pe_df = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
@@ -125,8 +125,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         if len(sub_idx) < 20: continue
 
                         trend = strategy.get_trend(sub_idx)
-                        ce_setup = strategy.check_setup(ce_df.iloc[max(0, i-50):i+1], trend)
-                        pe_setup = strategy.check_setup(pe_df.iloc[max(0, i-50):i+1], trend)
+                        ce_setup = strategy.check_setup(ce_df.iloc[max(0, i-50):i+1], trend, "CE")
+                        pe_setup = strategy.check_setup(pe_df.iloc[max(0, i-50):i+1], trend, "PE")
 
                         if ce_setup:
                             state.ce_markers.append({"time": ce_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "CE BUY"})
@@ -157,7 +157,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Add some surrounding strikes for readiness
                     step = 100 if "BANK" in index_sym else 50
                     for offset in [-100, 100]:
-                        for ot in ["C", "P"]:
+                        for ot in ["CE", "PE"]:
                             symbols.append(f"NSE:{dm.get_option_symbol(index_sym, strike + offset, ot)}")
 
                     state.live_feed.start()
@@ -170,8 +170,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
                     strike = dm.get_atm_strike(state.replay_data_idx['close'].iloc[0], step=100 if "BANK" in index_sym else 50)
 
-                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
-                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P")
+                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "CE")
+                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "PE")
                     state.replay_data_ce = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
                     state.replay_data_pe = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
 
@@ -198,6 +198,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     if state.replay_data_ce is not None and state.replay_idx < len(state.replay_data_ce):
                         state.replay_idx += 1
                         await send_replay_step(websocket, state)
+
+                elif data['type'] == 'set_replay_speed':
+                    state.replay_speed = float(data['speed'])
         except Exception as e:
             logger.exception("Listen Error")
 
@@ -211,7 +214,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await send_replay_step(websocket, state)
                     else:
                         state.is_playing = False
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(state.replay_speed)
         except Exception as e:
             logger.error(f"Replay Loop Error: {e}")
 
@@ -252,8 +255,8 @@ async def send_replay_step(websocket, state):
     if len(sub_idx) < 10: sub_idx = state.replay_data_idx.iloc[:10]
 
     trend = strategy.get_trend(sub_idx)
-    ce_setup = strategy.check_setup(sub_ce, trend)
-    pe_setup = strategy.check_setup(sub_pe, trend)
+    ce_setup = strategy.check_setup(sub_ce, trend, "CE")
+    pe_setup = strategy.check_setup(sub_pe, trend, "PE")
 
     ce_recs = format_records(sub_ce)
     pe_recs = format_records(sub_pe)
@@ -395,9 +398,9 @@ async def handle_live_update(websocket, state, update):
                     idx_df = pd.DataFrame(state.idx_history)
                     trend = strategy.get_trend(idx_df)
                     opt_df = pd.DataFrame(state.ce_history if is_ce else state.pe_history)
-                    setup = strategy.check_setup(opt_df, trend)
+                    setup = strategy.check_setup(opt_df, trend, "CE" if is_ce else "PE")
                     if setup:
-                        marker = {"time": target_candle['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"}
+                        marker = {"time": target_candle['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "CE BUY" if is_ce else "PE BUY"}
                         if is_ce: state.ce_markers.append(marker)
                         else: state.pe_markers.append(marker)
                         await websocket.send_json(clean_json({
