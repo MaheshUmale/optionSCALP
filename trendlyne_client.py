@@ -1,10 +1,13 @@
 import requests
+import httpx
+import asyncio
 
 class TrendlyneClient:
     def __init__(self):
         self.base_url = "https://smartoptions.trendlyne.com/phoenix/api"
+        self.async_client = httpx.AsyncClient(timeout=10.0)
 
-    def get_stock_id_for_symbol(self, symbol):
+    async def get_stock_id_for_symbol(self, symbol):
         # Strip common prefixes
         s = symbol.upper()
         if '|' in s:
@@ -33,17 +36,17 @@ class TrendlyneClient:
             print(f"[Trendlyne] Error fetching stock ID for {symbol}: {e}")
             return None
 
-    def get_expiry_dates(self, stock_id):
+    async def get_expiry_dates(self, stock_id):
         expiry_url = f"{self.base_url}/fno/get-expiry-dates/?mtype=options&stock_id={stock_id}"
         try:
-            response = requests.get(expiry_url, timeout=5)
+            response = await self.async_client.get(expiry_url)
             response.raise_for_status()
             return response.json().get('body', {}).get('expiryDates', [])
         except Exception as e:
             print(f"[Trendlyne] Error fetching expiry dates: {e}")
             return []
 
-    def get_live_oi_data(self, stock_id, expiry_date, min_time, max_time):
+    async def get_live_oi_data(self, stock_id, expiry_date, min_time, max_time):
         url = f"{self.base_url}/live-oi-data/"
         params = {
             'stockId': stock_id,
@@ -54,13 +57,39 @@ class TrendlyneClient:
         try:
             print(f"[Trendlyne] Fetching live OI data for stock_id={stock_id}, expiry_date={expiry_date}, min_time={min_time}, max_time={max_time}")
             print(f"[Trendlyne] URL: {url} with params: {params}")
-            response = requests.get(url, params=params, timeout=10)
+            response = await self.async_client.get(url, params=params)
             response.raise_for_status()
             return response.json()
         except Exception as e:
             print(f"[Trendlyne] Error fetching live OI data: {e}")
             return None
-        
+
+    async def get_buildup_5m_data(self, expiry, symbol, strike_price, option_type):
+        """
+        Fetches 5-minute buildup data for a specific option strike.
+        Expiry format expected by Trendlyne: '27-jan-2026-near'
+        """
+        # Map symbol if needed
+        if "BANKNIFTY" in symbol.upper():
+            symbol = "BANKNIFTY"
+        elif "NIFTY" in symbol.upper():
+            symbol = "NIFTY"
+
+        url = f"{self.base_url}/fno/buildup-5/{expiry}/{symbol}/"
+        params = {
+            'fno_mtype': 'options',
+            'strikePrice': strike_price,
+            'option_type': option_type.lower()
+        }
+        try:
+            print(f"[Trendlyne] Fetching 5m buildup data from {url}")
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"[Trendlyne] Error fetching 5m buildup data: {e}")
+            return None
+
 #  THIS IS FOR LIVE BELOW 
 
     
