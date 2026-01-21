@@ -29,13 +29,14 @@ class DataManager:
         return int(round(spot_price / step) * step)
 
     def get_next_expiry(self, index="BANKNIFTY"):
-        today_str = "260120"
+        today_str = datetime.now().strftime("%y%m%d")
+        print(f"Calculating next expiry for {index} as of {today_str}")
         if "BANKNIFTY" in index:
             # Monthly/Long expiries for BANKNIFTY 2026
             expires = ["260127", "260224", "260326", "260330", "260331", "260630", "260929", "261229"]
         else:
             # Weekly expiries for NIFTY 2026
-            expires = ["260106", "260113", "260120", "260127", "260203", "260210", "260217", "260224", "260326", "260330", "260331"]
+            expires = [  "260127", "260203", "260210", "260217", "260224", "260326", "260330", "260331"]
         for exp in expires:
             if exp >= today_str:
                 return exp
@@ -46,7 +47,7 @@ class DataManager:
             expiry = self.get_next_expiry(index)
         return f"{index}{expiry}{opt_type}{int(strike)}"
 
-    def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100):
+    def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=1000):
         df = None
         try:
             df = self.feed.get_historical_data(symbol, exchange="NSE", interval=interval, n_bars=n_bars)
@@ -114,12 +115,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.is_playing = False
                     index_sym = data['index']
                     strategy.update_params(index_sym)
-                    idx_df = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=100)
+                    idx_df = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=1000)
                     trend = strategy.get_trend(idx_df)
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
                     opt_type = "C" if trend == "BULLISH" else "P"
                     opt_sym = dm.get_option_symbol(index_sym, strike, opt_type)
-                    opt_df = dm.get_data(opt_sym, interval=Interval.in_1_minute, n_bars=100)
+                    opt_df = dm.get_data(opt_sym, interval=Interval.in_1_minute, n_bars=1000)
 
                     state.opt_sym = opt_sym
                     state.all_markers = []
@@ -137,7 +138,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     index_sym = data['index']
                     strategy.update_params(index_sym)
                     # Use a larger window for index to have history
-                    state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=300)
+                    state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=1000)
 
                     # Initial trend detection to pick CE/PE
                     initial_idx_slice = state.replay_data_idx.iloc[:50//5 + 10]
@@ -146,7 +147,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     opt_type = "C" if trend == "BULLISH" else "P"
 
                     state.opt_sym = dm.get_option_symbol(index_sym, strike, opt_type)
-                    state.replay_data_opt = dm.get_data(state.opt_sym, interval=Interval.in_1_minute, n_bars=300)
+                    state.replay_data_opt = dm.get_data(state.opt_sym, interval=Interval.in_1_minute, n_bars=1000)
                     state.replay_idx = 50
                     state.all_markers = []
                     state.is_playing = True
