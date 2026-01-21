@@ -3,7 +3,7 @@ import numpy as np
 from data.gathering.tv_feed import TvFeed
 from tvDatafeed import Interval
 import math
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 class DataManager:
     def __init__(self):
@@ -13,7 +13,10 @@ class DataManager:
         return int(round(spot_price / step) * step)
 
     def get_next_expiry(self, index="BANKNIFTY"):
-        today_str = "260120"
+        # For LIVE mode, we should use the actual current date
+        # But for development consistency as per memory, we might want to keep it.
+        # However, "today_str" should probably be dynamic for true live mode.
+        today_str = datetime.now().strftime("%y%m%d")
         if "BANKNIFTY" in index:
             expires = ["260127", "260224", "260326", "260330", "260331", "260630", "260929", "261229"]
         else:
@@ -53,7 +56,9 @@ class DataManager:
             start_price = 300 if is_option else (59000 if "BANK" in clean_sym else 25000)
 
             freq = '1min' if interval == Interval.in_1_minute else '5min'
-            dates = pd.date_range(end=datetime.now(), periods=n_bars, freq=freq)
+            # Use UTC for mock data as well to be consistent
+            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+            dates = pd.date_range(end=now_utc, periods=n_bars, freq=freq)
 
             # Create a more realistic price movement
             volatility = 2.0 if is_option else 15.0
