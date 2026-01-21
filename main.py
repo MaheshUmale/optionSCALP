@@ -31,15 +31,19 @@ class SessionState:
     def __init__(self):
         self.replay_idx = 0
         self.replay_data_idx = None
-        self.replay_data_opt = None
-        self.opt_sym = ""
+        self.replay_data_ce = None
+        self.replay_data_pe = None
+        self.ce_sym = ""
+        self.pe_sym = ""
         self.index_sym = ""
         self.is_playing = False
         self.is_live = False
-        self.all_markers = []
+        self.ce_markers = []
+        self.pe_markers = []
         self.live_feed = None
         self.last_idx_candle = None
-        self.last_opt_candle = None
+        self.last_ce_candle = None
+        self.last_pe_candle = None
 
 @app.get("/", response_class=HTMLResponse)
 async def get(request: Request):
@@ -73,86 +77,70 @@ async def websocket_endpoint(websocket: WebSocket):
                     index_sym = state.index_sym
                     strategy.update_params(index_sym)
 
-                    # Fetch current day's data (n_bars=1000 should cover it)
-                    idx_df = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=1000)
-                    trend = strategy.get_trend(idx_df)
+                    idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
-                    opt_type = "C" if trend == "BULLISH" else "P"
-                    state.opt_sym = dm.get_option_symbol(index_sym, strike, opt_type)
-                    opt_sym = state.opt_sym
-                    opt_df = dm.get_data(opt_sym, interval=Interval.in_1_minute, n_bars=1000)
 
-                    state.all_markers = []
+                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
+                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P")
+
+                    ce_df = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    pe_df = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
+
+                    state.ce_markers = []
+                    state.pe_markers = []
+
                     state.last_idx_candle = idx_df.iloc[-1].to_dict()
                     state.last_idx_candle['time'] = int(idx_df.index[-1].timestamp())
-                    state.last_opt_candle = opt_df.iloc[-1].to_dict()
-                    state.last_opt_candle['time'] = int(opt_df.index[-1].timestamp())
+                    state.last_ce_candle = ce_df.iloc[-1].to_dict()
+                    state.last_ce_candle['time'] = int(ce_df.index[-1].timestamp())
+                    state.last_pe_candle = pe_df.iloc[-1].to_dict()
+                    state.last_pe_candle['time'] = int(pe_df.index[-1].timestamp())
 
                     await websocket.send_json(clean_json({
                         "type": "live_data",
                         "index_data": format_records(idx_df),
-                        "option_data": format_records(opt_df),
-                        "option_symbol": opt_sym,
-                        "trend": trend,
-                        "footprint": generate_footprint_clusters(opt_df.iloc[-1])
+                        "ce_data": format_records(ce_df),
+                        "pe_data": format_records(pe_df),
+                        "ce_symbol": state.ce_sym,
+                        "pe_symbol": state.pe_sym,
+                        "trend": strategy.get_trend(idx_df)
                     }))
 
-                    # Setup Live Feed
-                    if state.live_feed:
-                        state.live_feed.stop()
-
+                    if state.live_feed: state.live_feed.stop()
                     loop = asyncio.get_running_loop()
-                    def live_callback(update):
-                        asyncio.run_coroutine_threadsafe(
-                            handle_live_update(websocket, state, update),
-                            loop
-                        )
+                    state.live_feed = TradingViewLiveFeed(lambda u: asyncio.run_coroutine_threadsafe(handle_live_update(websocket, state, u), loop))
 
-                    state.live_feed = TradingViewLiveFeed(live_callback)
-                    # Symbols in TV are like NSE:NIFTY
-                    tv_index = f"NSE:{index_sym}"
-                    tv_option = f"NSE:{opt_sym}"
-
-                    # Subscribe to ATM/OTM/ITM for both CE and PE to have data ready
-                    symbols_to_subscribe = [tv_index, tv_option]
-
-                    # Calculate a range of strikes to subscribe
+                    symbols = [f"NSE:{index_sym}", f"NSE:{state.ce_sym}", f"NSE:{state.pe_sym}"]
+                    # Add some surrounding strikes for readiness
                     step = 100 if "BANK" in index_sym else 50
-                    current_strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=step)
-
-                    for offset in [-200, -100, 0, 100, 200]:
-                        strike = current_strike + offset
-                        for opt_type in ["C", "P"]:
-                            sym = dm.get_option_symbol(index_sym, strike, opt_type)
-                            symbols_to_subscribe.append(f"NSE:{sym}")
+                    for offset in [-100, 100]:
+                        for ot in ["C", "P"]:
+                            symbols.append(f"NSE:{dm.get_option_symbol(index_sym, strike + offset, ot)}")
 
                     state.live_feed.start()
-                    state.live_feed.add_symbols(list(set(symbols_to_subscribe)))
+                    state.live_feed.add_symbols(list(set(symbols)))
 
                 elif data['type'] == 'start_replay':
                     logger.info(f"Starting replay for {data['index']}")
                     index_sym = data['index']
                     strategy.update_params(index_sym)
-                    # Use a larger window for index to have history
-                    state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=1000)
-
-                    # Initial trend detection to pick CE/PE
-                    initial_idx_slice = state.replay_data_idx.iloc[:50//5 + 10]
-                    trend = strategy.get_trend(initial_idx_slice)
+                    state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
                     strike = dm.get_atm_strike(state.replay_data_idx['close'].iloc[0], step=100 if "BANK" in index_sym else 50)
-                    opt_type = "C" if trend == "BULLISH" else "P"
 
-                    state.opt_sym = dm.get_option_symbol(index_sym, strike, opt_type)
-                    state.replay_data_opt = dm.get_data(state.opt_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
+                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P")
+                    state.replay_data_ce = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    state.replay_data_pe = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
+
                     state.replay_idx = 50
-                    state.all_markers = []
+                    state.ce_markers = []
+                    state.pe_markers = []
                     state.is_playing = True
 
                     await websocket.send_json({
                         "type": "replay_info",
-                        "max_idx": len(state.replay_data_opt),
-                        "current_idx": state.replay_idx,
-                        "option_symbol": state.opt_sym
+                        "max_idx": min(len(state.replay_data_ce), len(state.replay_data_pe)),
+                        "current_idx": state.replay_idx
                     })
                     await send_replay_step(websocket, state)
 
@@ -164,7 +152,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.is_playing = False
 
                 elif data['type'] == 'step_replay':
-                    if state.replay_data_opt is not None and state.replay_idx < len(state.replay_data_opt):
+                    if state.replay_data_ce is not None and state.replay_idx < len(state.replay_data_ce):
                         state.replay_idx += 1
                         await send_replay_step(websocket, state)
         except Exception as e:
@@ -173,9 +161,9 @@ async def websocket_endpoint(websocket: WebSocket):
     async def replay_loop():
         try:
             while websocket.client_state == WebSocketState.CONNECTED:
-                if state.is_playing and state.replay_data_opt is not None:
+                if state.is_playing and state.replay_data_ce is not None:
                     # print(f"Replay loop step: {state.replay_idx}")
-                    if state.replay_idx < len(state.replay_data_opt):
+                    if state.replay_idx < len(state.replay_data_ce):
                         state.replay_idx += 1
                         await send_replay_step(websocket, state)
                     else:
@@ -210,37 +198,36 @@ def format_records(df):
 
 async def send_replay_step(websocket, state):
     if websocket.client_state != WebSocketState.CONNECTED: return
-    logger.info(f"Sending replay step {state.replay_idx}")
-    sub_opt = state.replay_data_opt.iloc[:state.replay_idx]
+    sub_ce = state.replay_data_ce.iloc[:state.replay_idx]
+    sub_pe = state.replay_data_pe.iloc[:state.replay_idx]
 
-    # Synchronize index data based on timestamp of the last option candle
-    last_opt_time = sub_opt.index[-1]
-    sub_idx = state.replay_data_idx[state.replay_data_idx.index <= last_opt_time]
-
-    # Ensure at least some index data is shown
-    if len(sub_idx) < 10:
-        sub_idx = state.replay_data_idx.iloc[:10]
+    last_time = sub_ce.index[-1]
+    sub_idx = state.replay_data_idx[state.replay_data_idx.index <= last_time]
+    if len(sub_idx) < 10: sub_idx = state.replay_data_idx.iloc[:10]
 
     trend = strategy.get_trend(sub_idx)
-    setup = strategy.check_setup(sub_opt, trend)
-    clusters = generate_footprint_clusters(sub_opt.iloc[-1])
+    ce_setup = strategy.check_setup(sub_ce, trend)
+    pe_setup = strategy.check_setup(sub_pe, trend)
 
-    opt_recs = format_records(sub_opt)
-    if setup:
-        state.all_markers.append({
-            "time": opt_recs[-1]['datetime'],
-            "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"
-        })
+    ce_recs = format_records(sub_ce)
+    pe_recs = format_records(sub_pe)
 
-    # setup is either None or a dict. If it's a dict, we can send it.
+    if ce_setup:
+        state.ce_markers.append({"time": ce_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"})
+    if pe_setup:
+        state.pe_markers.append({"time": pe_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"})
+
     msg = {
         "type": "replay_step",
         "index_data": format_records(sub_idx),
-        "option_data": opt_recs,
-        "footprint": clusters,
-        "signal": setup if setup else None,
-        "markers": state.all_markers,
-        "option_symbol": state.opt_sym
+        "ce_data": ce_recs,
+        "pe_data": pe_recs,
+        "ce_markers": state.ce_markers,
+        "pe_markers": state.pe_markers,
+        "ce_symbol": state.ce_sym,
+        "pe_symbol": state.pe_sym,
+        "trend": trend,
+        "max_idx": min(len(state.replay_data_ce), len(state.replay_data_pe))
     }
 
     cleaned = clean_json(msg)
@@ -267,61 +254,39 @@ def clean_json(obj):
 
 async def handle_live_update(websocket, state, update):
     if websocket.client_state != WebSocketState.CONNECTED: return
-
-    # update: {"symbol": "...", "price": ..., "volume": ..., "timestamp": ...}
-    # Symbols from TV are like NSE:NIFTY or NSE:BANKNIFTY260127C59000
-    # state.index_sym is like "BANKNIFTY"
-    # state.opt_sym is like "BANKNIFTY260127C59000"
-
     clean_symbol = update['symbol'].replace("NSE:", "")
     is_index = clean_symbol == state.index_sym
-    is_option = clean_symbol == state.opt_sym
+    is_ce = clean_symbol == state.ce_sym
+    is_pe = clean_symbol == state.pe_sym
 
-    if not is_index and not is_option:
-        return # Ignore updates for other symbols (OTM/ITM not yet used in chart)
+    if not (is_index or is_ce or is_pe): return
 
-    # In a real app, we'd aggregate ticks into candles.
-    # For now, let's just update the last candle or create a new one if time has passed.
     now = int(datetime.now().timestamp())
-    interval_sec = 300 if is_index else 60
+    interval_sec = 60 # Force 1-minute timeframe for all charts
     candle_time = (now // interval_sec) * interval_sec
 
-    target_candle = state.last_idx_candle if is_index else state.last_opt_candle
+    if is_index: target_candle = state.last_idx_candle
+    elif is_ce: target_candle = state.last_ce_candle
+    else: target_candle = state.last_pe_candle
 
     if target_candle is None or candle_time > target_candle['time']:
-        # New candle
-        new_candle = {
-            "time": candle_time,
-            "open": update['price'],
-            "high": update['price'],
-            "low": update['price'],
-            "close": update['price'],
-            "volume": update['volume'] if update['volume'] else 0
-        }
+        new_candle = {"time": candle_time, "open": update['price'], "high": update['price'], "low": update['price'], "close": update['price'], "volume": update['volume'] if update['volume'] else 0}
         if is_index: state.last_idx_candle = new_candle
-        else: state.last_opt_candle = new_candle
+        elif is_ce: state.last_ce_candle = new_candle
+        else: state.last_pe_candle = new_candle
         target_candle = new_candle
     else:
-        # Update existing candle
         target_candle['close'] = update['price']
         if update['price'] > target_candle['high']: target_candle['high'] = update['price']
         if update['price'] < target_candle['low']: target_candle['low'] = update['price']
         if update['volume']: target_candle['volume'] = update['volume']
 
-    msg = {
-        "type": "live_update",
-        "symbol": update['symbol'],
-        "candle": target_candle,
-        "is_index": is_index
-    }
+    await websocket.send_json(clean_json({
+        "type": "live_update", "symbol": update['symbol'], "candle": target_candle,
+        "is_index": is_index, "is_ce": is_ce, "is_pe": is_pe
+    }))
 
-    # If it's an option update, we might also want to send footprint
-    if not is_index:
-        msg["footprint"] = generate_footprint_clusters(target_candle)
-
-    await websocket.send_json(clean_json(msg))
-
-def generate_footprint_clusters(row):
+def unused_footprint_logic(): # Placeholder to remove old function
     """Generates footprint clusters from a candle row (Series or dict)."""
     try:
         price_step = 1.0
