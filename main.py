@@ -7,7 +7,6 @@ import pandas as pd
 import uvicorn
 import json
 import asyncio
-import pandas as pd
 import numpy as np
 import logging
 from datetime import datetime, timedelta, timezone
@@ -286,42 +285,6 @@ async def handle_live_update(websocket, state, update):
         "is_index": is_index, "is_ce": is_ce, "is_pe": is_pe
     }))
 
-def unused_footprint_logic(): # Placeholder to remove old function
-    """Generates footprint clusters from a candle row (Series or dict)."""
-    try:
-        price_step = 1.0
-        # Handle both pandas Series and dict
-        open_p = row.get('open') if isinstance(row, dict) else row['open']
-        close_p = row.get('close') if isinstance(row, dict) else row['close']
-        high_p = row.get('high') if isinstance(row, dict) else row['high']
-        low_p = row.get('low') if isinstance(row, dict) else row['low']
-        volume = row.get('volume') if isinstance(row, dict) else row['volume']
-
-        mid = (open_p + close_p) / 2
-        low_bound = (low_p // price_step) * price_step
-        high_bound = (high_p // price_step) * price_step
-
-        clusters = []
-        curr = low_bound
-        range_val = max(high_p - low_p, 1.0)
-
-        while curr <= high_bound:
-            dist = max(0.1, 1.0 - abs(curr - mid) / range_val)
-            vol = int(volume * dist / 20)
-            dbias = (close_p - open_p) / range_val
-            buy_v = int(vol * (0.5 + 0.2 * dbias))
-            sell_v = max(0, vol - buy_v)
-            clusters.append({
-                "price": round(float(curr), 1),
-                "buy": int(buy_v),
-                "sell": int(sell_v),
-                "is_poc": abs(curr - mid) < price_step
-            })
-            curr += price_step
-        return clusters
-    except Exception as e:
-        logger.error(f"Error generating footprint: {e}")
-        return []
 
 if __name__ == "__main__":
     uvicorn.run(app, host="localhost", port=8000)
