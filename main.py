@@ -169,16 +169,35 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.live_feed.add_symbols(list(set(symbols)))
 
                 elif data['type'] == 'start_replay':
-                    logger.info(f"Starting replay for {data['index']}")
+                    logger.info(f"Starting replay for {data['index']} at {data.get('date', 'now')}")
                     index_sym = data['index']
+
+                    ref_date = None
+                    if data.get('date'):
+                        try:
+                            # Expected format YYYY-MM-DD
+                            ref_date = datetime.strptime(data['date'], "%Y-%m-%d")
+                            # Set to market close time for better data generation
+                            ref_date = ref_date.replace(hour=15, minute=30)
+                        except:
+                            logger.error(f"Invalid date format: {data['date']}")
+
                     strategy.update_params(index_sym)
-                    state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
+                    if state.replay_data_idx.empty:
+                        await websocket.send_json({"type": "error", "message": f"No data found for {index_sym}"})
+                        return
+
                     strike = dm.get_atm_strike(state.replay_data_idx['close'].iloc[0], step=100 if "BANK" in index_sym else 50)
 
-                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
-                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P")
-                    state.replay_data_ce = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
-                    state.replay_data_pe = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C", reference_date=ref_date)
+                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P", reference_date=ref_date)
+                    state.replay_data_ce = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
+                    state.replay_data_pe = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
+
+                    if state.replay_data_ce.empty or state.replay_data_pe.empty:
+                        await websocket.send_json({"type": "error", "message": f"Option data not found for {state.ce_sym} or {state.pe_sym}"})
+                        return
 
                     state.replay_idx = 50
                     state.ce_markers = []
@@ -276,7 +295,8 @@ async def send_replay_step(websocket, state):
         "ce_symbol": state.ce_sym,
         "pe_symbol": state.pe_sym,
         "trend": trend,
-        "max_idx": min(len(state.replay_data_ce), len(state.replay_data_pe))
+        "max_idx": min(len(state.replay_data_ce), len(state.replay_data_pe)),
+        "current_idx": state.replay_idx
     }
 
     if ce_setup:

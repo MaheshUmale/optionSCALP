@@ -87,9 +87,17 @@ ws.onmessage = (event) => {
         slider.value = data.current_idx;
     }
 
+    if (data.type === 'error') {
+        document.getElementById('status').innerText = `Error: ${data.message}`;
+        alert(data.message);
+        return;
+    }
+
     if (data.type === 'live_data' || data.type === 'replay_step') {
         if (data.type === 'replay_step') {
-            document.getElementById('replay-slider').value = data.max_idx || 0;
+            const slider = document.getElementById('replay-slider');
+            if (data.max_idx) slider.max = data.max_idx;
+            if (data.current_idx) slider.value = data.current_idx;
         }
 
         if (data.index_data && idxSeries) {
@@ -110,7 +118,9 @@ ws.onmessage = (event) => {
             ceVolSeries.setData(data.ce_data.map(d => ({
                 time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
             })));
-            if (data.ce_markers) ceSeries.setMarkers(data.ce_markers);
+            if (data.ce_markers) {
+                ceSeries.setMarkers(data.ce_markers);
+            }
         }
 
         if (data.pe_data && peSeries) {
@@ -121,7 +131,9 @@ ws.onmessage = (event) => {
             peVolSeries.setData(data.pe_data.map(d => ({
                 time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
             })));
-            if (data.pe_markers) peSeries.setMarkers(data.pe_markers);
+            if (data.pe_markers) {
+                peSeries.setMarkers(data.pe_markers);
+            }
         }
 
         if (data.ce_symbol) document.getElementById('ce-label').innerText = `CE OPTION: ${data.ce_symbol}`;
@@ -193,7 +205,13 @@ function updatePCRInsights(pcr) {
 }
 
 function fetchLive() { ws.send(JSON.stringify({ type: 'fetch_live', index: document.getElementById('index-select').value })); }
-function startReplay() { ws.send(JSON.stringify({ type: 'start_replay', index: document.getElementById('index-select').value })); }
+function startReplay() {
+    ws.send(JSON.stringify({
+        type: 'start_replay',
+        index: document.getElementById('index-select').value,
+        date: document.getElementById('replay-date') ? document.getElementById('replay-date').value : null
+    }));
+}
 function pauseReplay() { ws.send(JSON.stringify({ type: 'pause_replay' })); }
 function stepReplay() { ws.send(JSON.stringify({ type: 'step_replay' })); }
 function setReplaySpeed(val) { ws.send(JSON.stringify({ type: 'set_replay_speed', speed: parseFloat(val) })); }
