@@ -1,47 +1,45 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>OptionScalp Pro - Ultra Order Flow</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <title>OptionScalp Pro</title>
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body { margin: 0; background: #0c0d10; color: #d1d4dc; font-family: monospace; overflow: hidden; }
+        .top { height: 40px; background: #1e222d; display: flex; align-items: center; padding: 0 20px; border-bottom: 1px solid #333; }
+        .main { display: flex; height: calc(100vh - 40px); }
+        .charts { flex: 3; display: flex; flex-direction: column; padding: 10px; }
+        .chart-box { flex: 1; border: 1px solid #222; margin-bottom: 10px; background: #000; position: relative; }
+        .side { flex: 1; border-left: 1px solid #333; display: flex; flex-direction: column; background: #131722; }
+        .fp-container { flex: 1; overflow-y: auto; background: #000; font-size: 11px; border-bottom: 1px solid #333; }
+        .fp-row { display: flex; border-bottom: 1px solid #111; height: 16px; align-items: center; }
+        .fp-price { width: 50px; color: #888; text-align: right; margin-right: 5px; }
+        .fp-sell { flex: 1; background: #311b1b; color: #ff5252; text-align: center; border-right: 1px solid #222; }
+        .fp-buy { flex: 1; background: #1b3121; color: #4caf50; text-align: center; }
+        .fp-poc { border-top: 1px solid #ffeb3b; border-bottom: 1px solid #ffeb3b; }
+        .signals { height: 200px; padding: 10px; overflow-y: auto; font-size: 12px; }
+        button { background: #2962ff; color: #fff; border: none; padding: 6px 15px; cursor: pointer; border-radius: 3px; font-weight: bold; }
+        button:hover { background: #1e88e5; }
+    </style>
 </head>
 <body>
-    <div class="top-bar">
-        <div class="brand">OptionScalp Pro</div>
-        <div class="controls">
-            <select id="index-select">
-                <option value="BANKNIFTY">BANKNIFTY</option>
-                <option value="NIFTY">NIFTY</option>
-            </select>
-            <button onclick="fetchLive()">Go Live</button>
-            <button onclick="startReplay()">Play Replay</button>
-            <button onclick="pauseReplay()">Pause</button>
-            <button onclick="stepReplay()">Step</button>
-        </div>
-        <div id="status" class="status">System Ready</div>
+    <div class="top">
+        <span style="font-weight:bold; color:#2962ff; margin-right:20px; font-size:18px;">OptionScalp Pro</span>
+        <button onclick="start()">Play Replay</button>
+        <button onclick="pause()" style="margin-left:5px; background:#455a64;">Pause</button>
+        <div id="status" style="margin-left:auto; color:#ffeb3b; font-weight:bold;">Ready</div>
     </div>
-
-    <div class="main-container">
-        <div class="chart-section">
-            <div id="index-chart" class="chart-box"></div>
-            <div id="option-chart" class="chart-box"></div>
+    <div class="main">
+        <div class="charts">
+            <div id="idx-chart" class="chart-box"></div>
+            <div id="opt-chart" class="chart-box"></div>
         </div>
-
-        <div class="side-panel">
-            <div class="panel-header">FOOTPRINT / ORDER FLOW</div>
-            <div id="footprint-container" class="footprint-view">
-                <!-- Footprint cells go here -->
-            </div>
-
-            <div class="panel-header">SIGNALS</div>
-            <div id="signals-list" class="signals-view"></div>
-
-            <div class="panel-header">TRADE INFO</div>
-            <div id="trade-info" class="trade-info"></div>
+        <div class="side">
+            <div style="padding:8px; background:#1e222d; font-size:12px; font-weight:bold; border-bottom:1px solid #333;">FOOTPRINT / ORDER FLOW</div>
+            <div id="fp" class="fp-container"></div>
+            <div style="padding:8px; background:#1e222d; font-size:12px; font-weight:bold; border-bottom:1px solid #333;">SIGNALS</div>
+            <div id="sigs" class="signals"></div>
         </div>
     </div>
-
     <script src="/static/script.js"></script>
 </body>
 </html>

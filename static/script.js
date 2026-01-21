@@ -1,95 +1,48 @@
 const ws = new WebSocket(`ws://${window.location.host}/ws`);
+let idxSeries, optSeries, idxChart, optChart;
 
-let idxChart, optChart, idxSeries, optSeries;
-
-function initCharts() {
-    const chartOptions = {
+function init() {
+    console.log("Initializing charts...");
+    const cfg = {
         layout: { background: { type: 'solid', color: '#0c0d10' }, textColor: '#d1d4dc' },
-        grid: { vertLines: { color: '#1a1b22' }, horzLines: { color: '#1a1b22' } },
-        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        timeScale: { borderColor: '#2b2b3b', timeVisible: true, secondsVisible: false }
+        grid: { vertLines: { color: '#161921' }, horzLines: { color: '#161921' } },
+        timeScale: { borderColor: '#2b2b3b', timeVisible: true },
+        localization: { locale: 'en-US' }
     };
 
-    idxChart = LightweightCharts.createChart(document.getElementById('index-chart'), chartOptions);
-    optChart = LightweightCharts.createChart(document.getElementById('option-chart'), chartOptions);
+    idxChart = LightweightCharts.createChart(document.getElementById('idx-chart'), cfg);
+    optChart = LightweightCharts.createChart(document.getElementById('opt-chart'), cfg);
+    idxSeries = idxChart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350' });
+    optSeries = optChart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350' });
 
-    idxSeries = idxChart.addCandlestickSeries({
-        upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-        wickUpColor: '#26a69a', wickDownColor: '#ef5350'
-    });
-    optSeries = optChart.addCandlestickSeries({
-        upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-        wickUpColor: '#26a69a', wickDownColor: '#ef5350'
-    });
-
-    window.addEventListener('resize', () => {
-        idxChart.resize(document.getElementById('index-chart').clientWidth, document.getElementById('index-chart').clientHeight);
-        optChart.resize(document.getElementById('option-chart').clientWidth, document.getElementById('option-chart').clientHeight);
-    });
-}
-
-ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-
-    if (data.type === 'live_data' || data.type === 'replay_step') {
-        if (data.index_data) {
-            idxSeries.setData(data.index_data.map(d => ({
-                time: new Date(d.datetime).getTime() / 1000,
-                open: d.open, high: d.high, low: d.low, close: d.close
-            })));
-        }
-
-        if (data.option_data) {
-            const optMapped = data.option_data.map(d => ({
-                time: new Date(d.datetime).getTime() / 1000,
-                open: d.open, high: d.high, low: d.low, close: d.close
-            }));
-            optSeries.setData(optMapped);
-
-            if (data.markers) {
-                optSeries.setMarkers(data.markers.map(m => ({
-                    ...m,
-                    time: new Date(m.time).getTime() / 1000
-                })));
-            }
-        }
-
-        if (data.footprint) updateFootprint(data.footprint);
-        if (data.signal) updateSignal(data.signal);
-
-        document.getElementById('status').innerText = `Status: Connected | Sym: ${data.option_symbol || 'REPLAY'}`;
+    const resize = () => {
+        idxChart.resize(document.getElementById('idx-chart').clientWidth, document.getElementById('idx-chart').clientHeight);
+        optChart.resize(document.getElementById('opt-chart').clientWidth, document.getElementById('opt-chart').clientHeight);
     }
-};
+    window.addEventListener('resize', resize);
+    setTimeout(resize, 200);
 
-function updateFootprint(clusters) {
-    const container = document.getElementById('footprint-container');
-    container.innerHTML = '';
-    clusters.sort((a,b) => b.price - a.price);
-    clusters.forEach(c => {
-        const row = document.createElement('div');
-        row.className = 'fp-row' + (c.is_poc ? ' fp-poc' : '');
-        const buyImbalance = c.buy > c.sell * 2.5 && c.buy > 10;
-        const sellImbalance = c.sell > c.buy * 2.5 && c.sell > 10;
-        row.innerHTML = `
+    ws.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.index) idxSeries.setData(d.index);
+        if (d.option) optSeries.setData(d.option);
+        if (d.footprint) updateFP(d.footprint);
+        document.getElementById('status').innerText = "Streaming: " + d.option_symbol;
+    }
+}
+
+function updateFP(data) {
+    const div = document.getElementById('fp');
+    div.innerHTML = data.sort((a,b) => b.price - a.price).map(c => `
+        <div class="fp-row ${c.is_poc ? 'fp-poc' : ''}">
             <div class="fp-price">${c.price.toFixed(1)}</div>
-            <div class="fp-sell ${sellImbalance ? 'imbalance' : ''}">${c.sell}</div>
-            <div class="fp-buy ${buyImbalance ? 'imbalance' : ''}">${c.buy}</div>
-        `;
-        container.appendChild(row);
-    });
+            <div class="fp-sell">${c.sell}</div>
+            <div class="fp-buy">${c.buy}</div>
+        </div>
+    `).join('');
 }
 
-function updateSignal(sig) {
-    const list = document.getElementById('signals-list');
-    const div = document.createElement('div');
-    div.className = 'signal-item';
-    div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>BUY</b> @ ${sig.entry_price} (SL: ${sig.sl})`;
-    list.prepend(div);
-}
+function start() { ws.send(JSON.stringify({type:'start'})); }
+function pause() { ws.send(JSON.stringify({type:'pause'})); }
 
-function fetchLive() { ws.send(JSON.stringify({ type: 'fetch_live', index: document.getElementById('index-select').value })); }
-function startReplay() { ws.send(JSON.stringify({ type: 'start_replay', index: document.getElementById('index-select').value })); }
-function pauseReplay() { ws.send(JSON.stringify({ type: 'pause_replay' })); }
-function stepReplay() { ws.send(JSON.stringify({ type: 'step_replay' })); }
-
-window.onload = initCharts;
+window.onload = init;

@@ -1,7 +1,7 @@
 fastapi
 uvicorn
-websockets
+jinja2
 pandas
 numpy
 git+https://github.com/rongardF/tvdatafeed.git
-jinja2
+playwright
