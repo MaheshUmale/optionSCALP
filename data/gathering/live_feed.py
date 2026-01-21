@@ -18,6 +18,7 @@ class TradingViewLiveFeed:
         self.symbols = []
         self.is_running = False
         self.thread = None
+        self.last_prices = {} # Store last known prices
 
     def generate_session(self):
         string_length = 12
@@ -98,16 +99,20 @@ class TradingViewLiveFeed:
                             symbol = prefix["n"]
                             v = prefix.get("v", {})
 
+                            price = v.get("lp")
+                            if price is not None:
+                                self.last_prices[symbol] = price
+
                             update = {
                                 "symbol": symbol,
-                                "price": v.get("lp"),
+                                "price": self.last_prices.get(symbol),
                                 "volume": v.get("volume"),
                                 "change": v.get("ch"),
                                 "change_percentage": v.get("chp"),
                                 "timestamp": datetime.now().timestamp()
                             }
-                            # Only call callback if price is present (not all updates have all fields)
-                            if update["price"] is not None:
+                            # Call callback if we have at least a price and either price or volume updated
+                            if update["price"] is not None and (price is not None or v.get("volume") is not None):
                                 self.callback(update)
                     except json.JSONDecodeError:
                         # Might be a ping or other message

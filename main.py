@@ -43,6 +43,7 @@ class SessionState:
         self.last_idx_candle = None
         self.last_ce_candle = None
         self.last_pe_candle = None
+        self.last_total_volumes = {} # Track cumulative volumes to calculate deltas
 
 @app.get("/", response_class=HTMLResponse)
 async def get(request: Request):
@@ -89,11 +90,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.pe_markers = []
 
                     state.last_idx_candle = idx_df.iloc[-1].to_dict()
-                    state.last_idx_candle['time'] = int(idx_df.index[-1].timestamp())
+                    state.last_idx_candle['time'] = int(idx_df.index[-1].timestamp()) + 19800
                     state.last_ce_candle = ce_df.iloc[-1].to_dict()
-                    state.last_ce_candle['time'] = int(ce_df.index[-1].timestamp())
+                    state.last_ce_candle['time'] = int(ce_df.index[-1].timestamp()) + 19800
                     state.last_pe_candle = pe_df.iloc[-1].to_dict()
-                    state.last_pe_candle['time'] = int(pe_df.index[-1].timestamp())
+                    state.last_pe_candle['time'] = int(pe_df.index[-1].timestamp()) + 19800
 
                     await websocket.send_json(clean_json({
                         "type": "live_data",
@@ -178,14 +179,15 @@ async def websocket_endpoint(websocket: WebSocket):
             state.live_feed.stop()
 
 def format_records(df):
-    """Formats DataFrame for UI with Unix timestamps (UTC)."""
+    """Formats DataFrame for UI with Unix timestamps shifted to IST for presentation."""
     recs = df.copy().reset_index()
     # If the index is naive, assume it is UTC as tvDatafeed typically returns UTC for historical data
     if recs['datetime'].dt.tz is None:
         recs['datetime'] = recs['datetime'].dt.tz_localize('UTC')
 
-    # Add Unix timestamp in seconds for lightweight-charts
-    recs['time'] = recs['datetime'].apply(lambda x: int(x.timestamp()))
+    # Add Unix timestamp in seconds.
+    # Shift by 5.5 hours (19800s) to force UI to show IST even if browser is in UTC.
+    recs['time'] = recs['datetime'].apply(lambda x: int(x.timestamp()) + 19800)
 
     # Keep ISO string for reference if needed
     recs['datetime_str'] = recs['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -200,6 +202,7 @@ async def send_replay_step(websocket, state):
     sub_ce = state.replay_data_ce.iloc[:state.replay_idx]
     sub_pe = state.replay_data_pe.iloc[:state.replay_idx]
 
+    # Synchronize using UTC timestamps then shift for presentation
     last_time = sub_ce.index[-1]
     sub_idx = state.replay_data_idx[state.replay_data_idx.index <= last_time]
     if len(sub_idx) < 10: sub_idx = state.replay_data_idx.iloc[:10]
@@ -253,23 +256,45 @@ def clean_json(obj):
 
 async def handle_live_update(websocket, state, update):
     if websocket.client_state != WebSocketState.CONNECTED: return
-    clean_symbol = update['symbol'].replace("NSE:", "")
+    symbol = update['symbol']
+    clean_symbol = symbol.replace("NSE:", "")
     is_index = clean_symbol == state.index_sym
     is_ce = clean_symbol == state.ce_sym
     is_pe = clean_symbol == state.pe_sym
 
     if not (is_index or is_ce or is_pe): return
 
+    # Volume handling
+    current_total_volume = update.get('volume')
+    last_total_volume = state.last_total_volumes.get(symbol)
+
+    volume_delta = 0
+    if current_total_volume is not None:
+        if last_total_volume is not None:
+            volume_delta = max(0, current_total_volume - last_total_volume)
+        else:
+            # First live tick for this symbol: initialize total volume but don't add to candle
+            volume_delta = 0
+        state.last_total_volumes[symbol] = current_total_volume
+
     now = int(datetime.now().timestamp())
-    interval_sec = 60 # Force 1-minute timeframe for all charts
-    candle_time = (now // interval_sec) * interval_sec
+    interval_sec = 60
+    # Apply 5.5h shift for IST presentation
+    candle_time = ((now + 19800) // interval_sec) * interval_sec
 
     if is_index: target_candle = state.last_idx_candle
     elif is_ce: target_candle = state.last_ce_candle
     else: target_candle = state.last_pe_candle
 
     if target_candle is None or candle_time > target_candle['time']:
-        new_candle = {"time": candle_time, "open": update['price'], "high": update['price'], "low": update['price'], "close": update['price'], "volume": update['volume'] if update['volume'] else 0}
+        new_candle = {
+            "time": candle_time,
+            "open": update['price'],
+            "high": update['price'],
+            "low": update['price'],
+            "close": update['price'],
+            "volume": volume_delta
+        }
         if is_index: state.last_idx_candle = new_candle
         elif is_ce: state.last_ce_candle = new_candle
         else: state.last_pe_candle = new_candle
@@ -278,7 +303,7 @@ async def handle_live_update(websocket, state, update):
         target_candle['close'] = update['price']
         if update['price'] > target_candle['high']: target_candle['high'] = update['price']
         if update['price'] < target_candle['low']: target_candle['low'] = update['price']
-        if update['volume']: target_candle['volume'] = update['volume']
+        target_candle['volume'] += volume_delta
 
     await websocket.send_json(clean_json({
         "type": "live_update", "symbol": update['symbol'], "candle": target_candle,
