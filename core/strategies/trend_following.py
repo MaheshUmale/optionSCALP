@@ -1,13 +1,14 @@
 import pandas as pd
 import numpy as np
+from core.strategies.base_strategy import BaseStrategy
 
-class TrendFollowingStrategy:
+class TrendFollowingStrategy(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        self.symbol_type = symbol_type
+        super().__init__("TREND_FOLLOWING", symbol_type)
         self.update_params(symbol_type)
 
     def update_params(self, symbol_type):
-        self.symbol_type = symbol_type
+        super().update_params(symbol_type)
         self.target_range = (30, 40) if "BANKNIFTY" in symbol_type else (15, 20)
 
     def get_trend(self, index_df, pcr_insights=None):
@@ -41,24 +42,20 @@ class TrendFollowingStrategy:
 
         return price_trend
 
-    def check_setup(self, option_df, trend, option_type):
+    def check_setup_unified(self, index_df, option_df, pcr_insights, option_type):
         """
-        On Option Chart:
-        - Trend is BULLISH (Index) -> Look at CALL option (CE)
-        - Trend is BEARISH (Index) -> Look at PUT option (PE)
-        - Wait for Small Bearish Candle (Pullback)
+        Unified setup check for TrendFollowing.
         """
-        if option_df is None or option_df.empty: return None
+        trend = self.get_trend(index_df, pcr_insights)
         if not trend or trend == "NEUTRAL": return None
 
-        # Balanced Approach: Only trade CE on Bullish Trend and PE on Bearish Trend
-        # Support both "C"/"P" and "CE"/"PE" formats
         is_ce = option_type in ["CE", "C"]
         is_pe = option_type in ["PE", "P"]
 
         if trend == "BULLISH" and not is_ce: return None
         if trend == "BEARISH" and not is_pe: return None
 
+        if option_df is None or option_df.empty: return None
         last_candle = option_df.iloc[-1]
         # Entry candle must be bearish (pullback)
         is_bearish = last_candle['close'] < last_candle['open']

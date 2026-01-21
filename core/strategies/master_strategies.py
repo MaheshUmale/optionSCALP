@@ -539,13 +539,16 @@ class OptionBuyTest(BaseStrategy):
         super().__init__("OPTION_BUY_TEST", symbol_type)
 
     def check_setup(self, df, pcr_insights=None):
-        if df is None or len(df) < 1: return None
-        if df.iloc[-1]['close'] > 100:
+        if df is None or len(df) < 2: return None
+        # Always trigger a test signal to verify PnL flow
+        last_candle = df.iloc[-1]
+        prev_candle = df.iloc[-2]
+        if last_candle['close'] > prev_candle['high']:
             return {
                 "type": "LONG",
-                "entry_price": df.iloc[-1]['close'],
-                "sl": df.iloc[-1]['close'] - 10,
-                "target": df.iloc[-1]['close'] + 20
+                "entry_price": last_candle['close'],
+                "sl": last_candle['low'] - 10,
+                "target": last_candle['close'] + 20
             }
         return None
 
