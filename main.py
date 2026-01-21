@@ -33,12 +33,22 @@ tl_adv = TrendlyneScalper()
 
 class SessionState:
     def __init__(self):
-        self.master_strategies = [s() for s in STRATEGIES]
-        self.tf_strategy = TrendFollowingStrategy()
+        # Segregate strategy instances by symbol category to prevent variable collision
+        self.strategies = {
+            "CE": [s() for s in STRATEGIES],
+            "PE": [s() for s in STRATEGIES],
+            "INDEX": [s() for s in STRATEGIES]
+        }
+        self.tf_strategies = {
+            "CE": TrendFollowingStrategy(),
+            "PE": TrendFollowingStrategy()
+        }
+        self.tf_main = TrendFollowingStrategy() # For index trend calculation
         self.active_trades = []
         self.pnl_tracker = PnLTracker()
         self.last_trade_close_times = {} # (strategy_name, symbol) -> timestamp
         self.pcr_insights = {}
+        self.buildup_history = []
         self.replay_idx = 0
         self.replay_speed = 0.5
         self.replay_data_idx = None
@@ -93,9 +103,19 @@ async def websocket_endpoint(websocket: WebSocket):
                 if data['type'] == 'fetch_live':
                     state.is_playing = False
                     state.is_live = True
+                    # Reset state for live mode
+                    state.active_trades = []
+                    state.pnl_tracker = PnLTracker()
+                    state.ce_markers = []
+                    state.pe_markers = []
+                    state.last_trade_close_times = {}
+                    state.last_total_volumes = {}
+                    await websocket.send_json({"type": "reset_ui"})
+
                     state.index_sym = data['index']
                     index_sym = state.index_sym
-                    state.tf_strategy.update_params(index_sym)
+                    state.tf_main.update_params(index_sym)
+                    for k in state.tf_strategies: state.tf_strategies[k].update_params(index_sym)
 
                     idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
@@ -131,9 +151,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         sub_idx = idx_df.iloc[max(0, i-50):i+1]
                         if len(sub_idx) < 20: continue
 
-                        trend = state.tf_strategy.get_trend(sub_idx)
-                        ce_setup = state.tf_strategy.check_setup_unified(sub_idx, ce_df.iloc[max(0, i-50):i+1], state.pcr_insights, "CE")
-                        pe_setup = state.tf_strategy.check_setup_unified(sub_idx, pe_df.iloc[max(0, i-50):i+1], state.pcr_insights, "PE")
+                        trend = state.tf_main.get_trend(sub_idx)
+                        ce_setup = state.tf_strategies["CE"].check_setup_unified(sub_idx, ce_df.iloc[max(0, i-50):i+1], state.pcr_insights, "CE")
+                        pe_setup = state.tf_strategies["PE"].check_setup_unified(sub_idx, pe_df.iloc[max(0, i-50):i+1], state.pcr_insights, "PE")
 
                         if ce_setup:
                             state.ce_markers.append({"time": ce_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "CE BUY"})
@@ -142,7 +162,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     # Fetch Delta Volume signals and PCR Insights from Trendlyne
                     delta_signals = await fetch_trendlyne_signals(index_sym, strike)
-                    state.pcr_insights = await fetch_pcr_insights(index_sym)
+                    pcr_res = await fetch_pcr_insights(index_sym)
+                    state.pcr_insights = pcr_res.get('insights', {})
+                    state.buildup_history = pcr_res.get('buildup_list', [])
 
                     await websocket.send_json(clean_json({
                         "type": "live_data",
@@ -153,7 +175,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "pe_markers": state.pe_markers,
                         "ce_symbol": state.ce_sym,
                         "pe_symbol": state.pe_sym,
-                        "trend": state.tf_strategy.get_trend(idx_df, state.pcr_insights),
+                        "trend": state.tf_main.get_trend(idx_df, state.pcr_insights),
                         "delta_signals": delta_signals,
                         "pcr_insights": state.pcr_insights
                     }))
@@ -174,6 +196,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif data['type'] == 'start_replay':
                     logger.info(f"Starting replay for {data['index']} at {data.get('date', 'now')}")
+                    # Reset state for new replay
+                    state.active_trades = []
+                    state.pnl_tracker = PnLTracker()
+                    state.ce_markers = []
+                    state.pe_markers = []
+                    state.last_trade_close_times = {}
+                    await websocket.send_json({"type": "reset_ui"})
+
                     index_sym = data['index']
 
                     ref_date = None
@@ -186,7 +216,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         except:
                             logger.error(f"Invalid date format: {data['date']}")
 
-                    state.tf_strategy.update_params(index_sym)
+                    # Fetch PCR/Buildup for historical date
+                    pcr_res = await fetch_pcr_insights(index_sym, ref_date=ref_date)
+                    state.pcr_insights = pcr_res.get('insights', {})
+                    state.buildup_history = pcr_res.get('buildup_list', [])
+
+                    state.tf_main.update_params(index_sym)
+                    for k in state.tf_strategies: state.tf_strategies[k].update_params(index_sym)
                     state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
                     if state.replay_data_idx.empty:
                         await websocket.send_json({"type": "error", "message": f"No data found for {index_sym}"})
@@ -272,6 +308,42 @@ def format_records(df):
 
     return recs.to_dict(orient='records')
 
+def normalize_buildup(status):
+    s = str(status).upper()
+    if "LONG BUILD" in s: return "LONG BUILD"
+    if "SHORT COVER" in s: return "SHORT COVER"
+    if "SHORT BUILD" in s: return "SHORT BUILD"
+    if "LONG UNWIND" in s: return "LONG UNWIND"
+    return "NEUTRAL"
+
+def get_buildup_for_time(buildup_history, current_time):
+    """
+    Parses buildup_history (list of ['9:15 TO 9:20', 'Status', ...])
+    to find the one matching current_time (datetime or timestamp).
+    """
+    if not buildup_history: return "NEUTRAL"
+
+    if isinstance(current_time, (int, float)):
+        # Convert shifted IST timestamp back to naive datetime for matching
+        dt = datetime.utcfromtimestamp(current_time)
+    else:
+        dt = current_time
+
+    curr_str = dt.strftime("%H:%M")
+
+    for row in buildup_history:
+        if isinstance(row, list) and len(row) > 0:
+            time_range = row[0] # "09:15 TO 09:20"
+            try:
+                # Handle both "HH:MM TO HH:MM" and other potential formats
+                if " TO " in time_range:
+                    start_str, end_str = time_range.split(" TO ")
+                    if start_str <= curr_str <= end_str:
+                        return normalize_buildup(row[1])
+            except:
+                continue
+    return None
+
 async def send_replay_step(websocket, state):
     try:
         # 1. Basic Validation
@@ -289,7 +361,12 @@ async def send_replay_step(websocket, state):
 
         # 3. Initialize Context
         if not state.pcr_insights:
-            state.pcr_insights = {'pcr': 1.0, 'pcr_change': 1.0, 'buildup_status': 'Neutral'}
+            state.pcr_insights = {'pcr': 1.0, 'pcr_change': 1.0, 'buildup_status': 'NEUTRAL'}
+
+        # Update buildup status from history if available
+        hist_buildup = get_buildup_for_time(state.buildup_history, last_time)
+        if hist_buildup:
+            state.pcr_insights['buildup_status'] = hist_buildup
 
         # 4. Check Active Trades
         check_trade_exits(state, sub_idx, sub_ce, sub_pe)
@@ -299,45 +376,61 @@ async def send_replay_step(websocket, state):
         pe_recs = format_records(sub_pe)
         idx_recs = format_records(sub_idx)
 
-        # 6. Process All Strategies (Unified)
-        all_strategies = state.master_strategies + [state.tf_strategy]
-        trend = state.tf_strategy.get_trend(sub_idx, state.pcr_insights)
+        # 6. Process All Strategies (Unified & Segregated)
+        trend = state.tf_main.get_trend(sub_idx, state.pcr_insights)
+        new_signals = []
+        sl_dist = 30 if "BANK" in state.index_sym else 20
 
-        for strat in all_strategies:
-            ce_setup = None
-            pe_setup = None
+        # A. Index-driven strategies
+        for strat in state.strategies["INDEX"]:
+            is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
+            if is_index_driven:
+                setup = strat.check_setup(sub_idx, state.pcr_insights)
+                if setup:
+                    is_ce_trade = (setup.get('type') == 'LONG')
+                    target_recs = ce_recs if is_ce_trade else pe_recs
+                    target_sym = state.ce_sym if is_ce_trade else state.pe_sym
+                    target_markers = state.ce_markers if is_ce_trade else state.pe_markers
 
-            if strat.name == "TREND_FOLLOWING":
-                ce_setup = strat.check_setup_unified(sub_idx, sub_ce, state.pcr_insights, "CE")
-                pe_setup = strat.check_setup_unified(sub_idx, sub_pe, state.pcr_insights, "PE")
-            else:
+                    setup['strat_name'] = strat.name
+                    setup['time'] = target_recs[-1]['time']
+                    setup['entry_price'] = target_recs[-1]['close']
+                    setup['sl'] = setup['entry_price'] - sl_dist
+                    setup['target'] = setup['entry_price'] + sl_dist * 2
+
+                    if handle_new_trade(state, strat.name, target_sym, setup, setup['time']):
+                        new_signals.append(setup)
+                        target_markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
+
+        # B. Option-driven strategies
+        for side, sym, df, markers, strat_list, recs in [("CE", state.ce_sym, sub_ce, state.ce_markers, state.strategies["CE"], ce_recs), ("PE", state.pe_sym, sub_pe, state.pe_markers, state.strategies["PE"], pe_recs)]:
+            for strat in strat_list:
                 is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
-                if is_index_driven:
-                    setup = strat.check_setup(sub_idx, state.pcr_insights)
+                if not is_index_driven:
+                    setup = strat.check_setup(df, state.pcr_insights)
                     if setup:
-                        if setup['type'] == 'LONG': ce_setup = setup
-                        else: pe_setup = setup
-                else:
-                    ce_setup = strat.check_setup(sub_ce, state.pcr_insights)
-                    pe_setup = strat.check_setup(sub_pe, state.pcr_insights)
+                        setup['strat_name'] = strat.name
+                        setup['time'] = recs[-1]['time']
+                        setup['entry_price'] = df['close'].iloc[-1]
+                        setup['sl'] = setup['entry_price'] - sl_dist
+                        setup['target'] = setup['entry_price'] + sl_dist * 2
+                        if handle_new_trade(state, strat.name, sym, setup, setup['time']):
+                            new_signals.append(setup)
+                            markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
 
-            sl_dist = 30 if "BANK" in state.index_sym else 20
-
-            if ce_setup:
-                ce_setup['entry_price'] = ce_recs[-1]['close']
-                ce_setup['sl'] = ce_setup['entry_price'] - sl_dist
-                ce_setup['target'] = ce_setup['entry_price'] + sl_dist * 2
-                if handle_new_trade(state, strat.name, state.ce_sym, ce_setup, ce_recs[-1]['time']):
-                    color = "#2196F3" if strat.name == "TREND_FOLLOWING" else "#FF9800"
-                    state.ce_markers.append({"time": ce_recs[-1]['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": strat.name})
-
-            if pe_setup:
-                pe_setup['entry_price'] = pe_recs[-1]['close']
-                pe_setup['sl'] = pe_setup['entry_price'] - sl_dist
-                pe_setup['target'] = pe_setup['entry_price'] + sl_dist * 2
-                if handle_new_trade(state, strat.name, state.pe_sym, pe_setup, pe_recs[-1]['time']):
-                    color = "#2196F3" if strat.name == "TREND_FOLLOWING" else "#FF9800"
-                    state.pe_markers.append({"time": pe_recs[-1]['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": strat.name})
+        # C. Trend Following
+        for side, sym, df, markers, recs in [("CE", state.ce_sym, sub_ce, state.ce_markers, ce_recs), ("PE", state.pe_sym, sub_pe, state.pe_markers, pe_recs)]:
+            tf_strat = state.tf_strategies[side]
+            setup = tf_strat.check_setup_unified(sub_idx, df, state.pcr_insights, side)
+            if setup:
+                setup['strat_name'] = tf_strat.name
+                setup['time'] = recs[-1]['time']
+                setup['entry_price'] = df['close'].iloc[-1]
+                setup['sl'] = setup['entry_price'] - sl_dist
+                setup['target'] = setup['entry_price'] + sl_dist * 2
+                if handle_new_trade(state, tf_strat.name, sym, setup, setup['time']):
+                    new_signals.append(setup)
+                    markers.append({"time": setup['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": tf_strat.name})
 
         # 7. Construct Message
         msg = {
@@ -352,7 +445,8 @@ async def send_replay_step(websocket, state):
             "trend": trend,
             "max_idx": min(len(state.replay_data_ce), len(state.replay_data_pe)),
             "current_idx": state.replay_idx,
-            "pnl_stats": state.pnl_tracker.get_stats()
+            "pnl_stats": state.pnl_tracker.get_stats(),
+            "new_signals": new_signals
         }
 
         await websocket.send_json(clean_json(msg))
@@ -378,49 +472,55 @@ def clean_json(obj):
         return obj.isoformat()
     return obj
 
-async def fetch_pcr_insights(index_sym):
+async def fetch_pcr_insights(index_sym, ref_date=None):
     """Fetches PCR and OI insights using TrendlyneAdvClient."""
     try:
         stock_id = await tl_adv.get_stock_id(index_sym)
         expiries = await tl_adv.get_expiry_data(stock_id)
 
-        t_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        t_date = (ref_date or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
         valid = []
         for e in expiries["expiresDts"]:
             try:
                 dt = datetime.strptime(e, "%d-%b-%Y")
             except ValueError:
-                dt = datetime.strptime(e, "%Y-%m-%d")
+                try:
+                    dt = datetime.strptime(e, "%Y-%m-%d")
+                except:
+                    continue
             if dt >= t_date:
                 valid.append(dt)
 
-        if not valid: return None
+        if not valid: return {"insights": {}, "buildup_list": []}
         target_dt = valid[0]
         api_expiry_str = target_dt.strftime("%Y-%m-%d")
 
-        live_data = await tl_adv.get_live_oi_snapshot(stock_id, api_expiry_str)
-        insights = tl_adv.extract_writer_insights(live_data) or {}
+        insights = {}
+        # Only fetch live snapshot if it's for today
+        if not ref_date or ref_date.date() == datetime.now().date():
+            live_data = await tl_adv.get_live_oi_snapshot(stock_id, api_expiry_str)
+            insights = tl_adv.extract_writer_insights(live_data) or {}
+        else:
+            insights = {'pcr': 1.0, 'pcr_change': 1.0, 'buildup_status': 'NEUTRAL'}
 
-        # Fetch 5m buildup for index trend confirmation
-        buildup = await tl_adv.get_buildup_5m(target_dt, index_sym)
-        if buildup and len(buildup) > 0:
-            # Based on sample output, latest bars are likely at the beginning or end.
-            # Usually, the most recent 5m candle is what we want.
-            # If the API returns newest first (as per sample), use buildup[0].
-            # Let's check the sample again: 15:25 is at the top.
-            latest = buildup[0]
-            # Sample row: ['15:25 TO 15:30', 'Short Covering', ...]
-            # If it's a list:
+        # Fetch 5m buildup
+        buildup_list = await tl_adv.get_buildup_5m(target_dt, index_sym)
+
+        # Normalize buildup status text for latest insight
+        if buildup_list and len(buildup_list) > 0:
+            latest = buildup_list[0]
+            status = "NEUTRAL"
             if isinstance(latest, list) and len(latest) > 1:
-                insights['buildup_status'] = latest[1]
-            # If it's a dict (sometimes APIs return objects):
+                status = latest[1]
             elif isinstance(latest, dict):
-                insights['buildup_status'] = latest.get('status') or latest.get('buildup_type')
+                status = latest.get('status') or latest.get('buildup_type') or "NEUTRAL"
 
-        return insights
+            insights['buildup_status'] = normalize_buildup(status)
+
+        return {"insights": insights, "buildup_list": buildup_list}
     except Exception as e:
         logger.error(f"Error fetching PCR insights: {e}")
-    return None
+    return {"insights": {}, "buildup_list": []}
 
 async def fetch_trendlyne_signals(index_sym, atm_strike):
     """
@@ -469,6 +569,28 @@ async def fetch_trendlyne_signals(index_sym, atm_strike):
         logger.error(f"Error fetching Trendlyne signals: {e}")
         return None
 
+async def handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle):
+    sl_dist = 30 if "BANK" in state.index_sym else 20
+    setup['strat_name'] = strat.name
+    setup['time'] = target_candle['time']
+    setup['entry_price'] = setup.get('entry_price') or target_candle['close']
+    setup['sl'] = setup['entry_price'] - sl_dist
+    setup['target'] = setup['entry_price'] + sl_dist * 2
+
+    is_ce_t = (is_ce or (setup.get('type') == 'LONG' and not is_pe))
+    symbol = state.ce_sym if is_ce_t else state.pe_sym
+
+    if handle_new_trade(state, strat.name, symbol, setup, target_candle['time']):
+        color = "#2196F3" if strat.name == "TREND_FOLLOWING" else "#FF9800"
+        marker = {"time": target_candle['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": strat.name}
+        if is_ce_t: state.ce_markers.append(marker)
+        else: state.pe_markers.append(marker)
+        await websocket.send_json(clean_json({
+            "type": "marker_update", "is_ce": is_ce_t,
+            "is_pe": not is_ce_t,
+            "marker": marker, "signal": setup
+        }))
+
 async def handle_live_update(websocket, state, update):
     if websocket.client_state != WebSocketState.CONNECTED: return
     symbol = update['symbol']
@@ -513,39 +635,31 @@ async def handle_live_update(websocket, state, update):
             if len(state.ce_history) > 100: state.ce_history.pop(0)
             if len(state.pe_history) > 100: state.pe_history.pop(0)
 
-            # Check for strategy setup on closed candle (Unified)
-            if is_ce or is_pe:
-                if len(state.idx_history) > 20:
-                    idx_df = pd.DataFrame(state.idx_history)
-                    ce_df = pd.DataFrame(state.ce_history)
-                    pe_df = pd.DataFrame(state.pe_history)
+            # Check for strategy setup on closed candle (Unified & Segregated)
+            if (is_ce or is_pe) and len(state.idx_history) > 20:
+                idx_df = pd.DataFrame(state.idx_history)
+                ce_df = pd.DataFrame(state.ce_history)
+                pe_df = pd.DataFrame(state.pe_history)
 
-                    all_strategies = state.master_strategies + [state.tf_strategy]
+                # A. Option-driven
+                strats_to_check = state.strategies["CE"] if is_ce else state.strategies["PE"]
+                for strat in strats_to_check:
+                    is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
+                    if not is_index_driven:
+                        setup = strat.check_setup(ce_df if is_ce else pe_df, state.pcr_insights)
+                        if setup: await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
 
-                    for strat in all_strategies:
-                        setup = None
-                        if strat.name == "TREND_FOLLOWING":
-                            setup = strat.check_setup_unified(idx_df, ce_df if is_ce else pe_df, state.pcr_insights, "CE" if is_ce else "PE")
-                        else:
-                            # Simplification for live mode: check only option-driven ones or specific logic
-                            is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
-                            if not is_index_driven:
-                                setup = strat.check_setup(ce_df if is_ce else pe_df, state.pcr_insights)
+                # B. Index-driven (on CE close to avoid duplicates)
+                if is_ce:
+                    for strat in state.strategies["INDEX"]:
+                        if any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
+                            setup = strat.check_setup(idx_df, state.pcr_insights)
+                            if setup: await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
 
-                        if setup:
-                            sl_dist = 30 if "BANK" in state.index_sym else 20
-                            setup['entry_price'] = (ce_df if is_ce else pe_df).iloc[-1]['close']
-                            setup['sl'] = setup['entry_price'] - sl_dist
-                            setup['target'] = setup['entry_price'] + sl_dist * 2
-
-                            if handle_new_trade(state, strat.name, state.ce_sym if is_ce else state.pe_sym, setup, target_candle['time']):
-                                color = "#2196F3" if strat.name == "TREND_FOLLOWING" else "#FF9800"
-                                marker = {"time": target_candle['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": strat.name}
-                                if is_ce: state.ce_markers.append(marker)
-                                else: state.pe_markers.append(marker)
-                                await websocket.send_json(clean_json({
-                                    "type": "marker_update", "is_ce": is_ce, "is_pe": is_pe, "marker": marker, "signal": setup
-                                }))
+                # C. Trend Following
+                tf_strat = state.tf_strategies["CE" if is_ce else "PE"]
+                setup = tf_strat.check_setup_unified(idx_df, ce_df if is_ce else pe_df, state.pcr_insights, "CE" if is_ce else "PE")
+                if setup: await handle_live_setup(setup, tf_strat, is_ce, is_pe, state, websocket, target_candle)
 
         new_candle = {
             "time": candle_time,
@@ -564,12 +678,15 @@ async def handle_live_update(websocket, state, update):
         if is_index:
             strike = dm.get_atm_strike(update['price'], step=100 if "BANK" in clean_symbol else 50)
             delta_signals = await fetch_trendlyne_signals(clean_symbol, strike)
-            state.pcr_insights = await fetch_pcr_insights(clean_symbol)
+            pcr_res = await fetch_pcr_insights(clean_symbol)
+            state.pcr_insights = pcr_res.get('insights', {})
+            state.buildup_history = pcr_res.get('buildup_list', [])
+
             await websocket.send_json(clean_json({
                 "type": "delta_signals",
                 "delta_signals": delta_signals,
                 "pcr_insights": state.pcr_insights,
-                "trend": state.tf_strategy.get_trend(pd.DataFrame(state.idx_history), state.pcr_insights) if state.idx_history else None
+                "trend": state.tf_main.get_trend(pd.DataFrame(state.idx_history), state.pcr_insights) if state.idx_history else None
             }))
     else:
         target_candle['close'] = update['price']
@@ -589,9 +706,9 @@ def handle_new_trade(state, strategy_name, symbol, setup, time):
         if t.strategy_name == strategy_name and t.symbol == symbol:
             return False
 
-    # Cooldown check: 15 minutes (900 seconds)
+    # Cooldown check: 5 minutes (300 seconds)
     last_close = state.last_trade_close_times.get((strategy_name, symbol), 0)
-    if time - last_close < 900:
+    if time - last_close < 300:
         return False
 
     # Since we only BUY options (Call for market-long, Put for market-short),

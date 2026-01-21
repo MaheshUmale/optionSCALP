@@ -87,6 +87,14 @@ ws.onmessage = (event) => {
         slider.value = data.current_idx;
     }
 
+    if (data.type === 'reset_ui') {
+        if (ceSeries) ceSeries.setMarkers([]);
+        if (peSeries) peSeries.setMarkers([]);
+        document.getElementById('signals-list').innerHTML = '';
+        updatePnLStats(null);
+        return;
+    }
+
     if (data.type === 'error') {
         document.getElementById('status').innerText = `Error: ${data.message}`;
         alert(data.message);
@@ -138,7 +146,9 @@ ws.onmessage = (event) => {
 
         if (data.ce_symbol) document.getElementById('ce-label').innerText = `CE OPTION: ${data.ce_symbol}`;
         if (data.pe_symbol) document.getElementById('pe-label').innerText = `PE OPTION: ${data.pe_symbol}`;
-        if (data.signal) updateSignal(data.signal);
+        if (data.new_signals) {
+            data.new_signals.forEach(sig => updateSignal(sig));
+        }
 
         document.getElementById('status').innerText = `Status: Connected | Trend: ${data.trend || 'N/A'}`;
     }
@@ -167,9 +177,9 @@ ws.onmessage = (event) => {
         updatePCRInsights(data.pcr_insights);
     }
 
-        if (data.pnl_stats) {
-            updatePnLStats(data.pnl_stats);
-        }
+    if (data.pnl_stats) {
+        updatePnLStats(data.pnl_stats);
+    }
 
     if (data.type === 'marker_update') {
         if (data.is_ce) ceSeries.setMarkers([...ceSeries.markers() || [], data.marker]);
@@ -182,10 +192,15 @@ function updateSignal(sig) {
     const list = document.getElementById('signals-list');
     const div = document.createElement('div');
     div.className = 'signal-item';
-    const type = sig.type || "BUY";
-    const color = type.includes("CE") ? "#26a69a" : (type.includes("PE") ? "#ef5350" : "#2196F3");
+    const strat = sig.strat_name || "STRATEGY";
+    const side = (sig.type && sig.type.includes("PE")) ? "PE" : "CE";
+    const color = side === "CE" ? "#26a69a" : "#ef5350";
+
+    // For replay mode, sig.time is the shifted IST unix timestamp.
+    const timeStr = sig.time ? new Date((sig.time - 19800) * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
+
     div.style.borderLeft = `4px solid ${color}`;
-    div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>${type}</b> @ ${sig.entry_price} (SL: ${sig.sl})`;
+    div.innerHTML = `[${timeStr}] <b>${strat}</b> (${side}) @ ${sig.entry_price.toFixed(2)} (SL: ${sig.sl.toFixed(2)})`;
     list.prepend(div);
 }
 
