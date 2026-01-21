@@ -129,9 +129,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         pe_setup = strategy.check_setup(pe_df.iloc[max(0, i-50):i+1], trend)
 
                         if ce_setup:
-                            state.ce_markers.append({"time": ce_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"})
+                            state.ce_markers.append({"time": ce_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "CE BUY"})
                         if pe_setup:
-                            state.pe_markers.append({"time": pe_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"})
+                            state.pe_markers.append({"time": pe_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "PE BUY"})
 
                     # Fetch Delta Volume signals from Trendlyne
                     delta_signals = await fetch_trendlyne_signals(index_sym, strike)
@@ -211,7 +211,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await send_replay_step(websocket, state)
                     else:
                         state.is_playing = False
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"Replay Loop Error: {e}")
 
@@ -259,9 +259,9 @@ async def send_replay_step(websocket, state):
     pe_recs = format_records(sub_pe)
 
     if ce_setup:
-        state.ce_markers.append({"time": ce_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"})
+        state.ce_markers.append({"time": ce_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "CE BUY"})
     if pe_setup:
-        state.pe_markers.append({"time": pe_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"})
+        state.pe_markers.append({"time": pe_recs[-1]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "PE BUY"})
 
     msg = {
         "type": "replay_step",
