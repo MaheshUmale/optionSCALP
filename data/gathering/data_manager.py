@@ -13,14 +13,22 @@ class DataManager:
         return int(round(spot_price / step) * step)
 
     def get_next_expiry(self, index="BANKNIFTY"):
-        # For LIVE mode, we should use the actual current date
-        # But for development consistency as per memory, we might want to keep it.
-        # However, "today_str" should probably be dynamic for true live mode.
+        """Returns the next valid expiry date in YYMMDD format."""
         today_str = datetime.now().strftime("%y%m%d")
+
+        # Based on NSE 2026 Expiry Metadata
         if "BANKNIFTY" in index:
-            expires = ["260127", "260224", "260326", "260330", "260331", "260630", "260929", "261229"]
+            expires = [
+                "260127", "260224", "260326", "260330", "260331",
+                "260630", "260929", "261229"
+            ]
         else:
-            expires = ["260106", "260113", "260120", "260127", "260203", "260210", "260217", "260224", "260326", "260330", "260331"]
+            expires = [
+                "260106", "260113", "260120", "260127", "260203",
+                "260210", "260217", "260224", "260326", "260330",
+                "260331", "260625", "260630", "260929", "261229", "261231"
+            ]
+
         for exp in expires:
             if exp >= today_str:
                 return exp
