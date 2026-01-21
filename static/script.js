@@ -31,7 +31,16 @@ function initCharts() {
 ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
 
+    if (data.type === 'replay_info') {
+        const slider = document.getElementById('replay-slider');
+        slider.max = data.max_idx;
+        slider.value = data.current_idx;
+    }
+
     if (data.type === 'live_data' || data.type === 'replay_step') {
+        if (data.type === 'replay_step') {
+            document.getElementById('replay-slider').value = data.option_data.length;
+        }
         if (data.index_data) {
             idxSeries.setData(data.index_data.map(d => ({
                 time: new Date(d.datetime).getTime() / 1000,
@@ -91,5 +100,6 @@ function fetchLive() { ws.send(JSON.stringify({ type: 'fetch_live', index: docum
 function startReplay() { ws.send(JSON.stringify({ type: 'start_replay', index: document.getElementById('index-select').value })); }
 function pauseReplay() { ws.send(JSON.stringify({ type: 'pause_replay' })); }
 function stepReplay() { ws.send(JSON.stringify({ type: 'step_replay' })); }
+function onSliderChange(val) { ws.send(JSON.stringify({ type: 'set_replay_index', index: parseInt(val) })); }
 
 window.onload = initCharts;

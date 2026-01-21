@@ -15,9 +15,10 @@
                 <option value="NIFTY">NIFTY</option>
             </select>
             <button onclick="fetchLive()">Go Live</button>
-            <button onclick="startReplay()">Play Replay</button>
+            <button onclick="startReplay()">Start Replay</button>
             <button onclick="pauseReplay()">Pause</button>
             <button onclick="stepReplay()">Step</button>
+            <input type="range" id="replay-slider" min="50" max="300" value="50" style="width: 150px; margin-left: 10px;" oninput="onSliderChange(this.value)">
         </div>
         <div id="status" class="status">System Ready</div>
     </div>
