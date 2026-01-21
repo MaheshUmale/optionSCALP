@@ -120,6 +120,12 @@ ws.onmessage = (event) => {
     if (data.type === 'delta_signals' && data.delta_signals) {
         updateDeltaSignal(data.delta_signals);
     }
+
+    if (data.type === 'marker_update') {
+        if (data.is_ce) ceSeries.setMarkers([...ceSeries.markers() || [], data.marker]);
+        if (data.is_pe) peSeries.setMarkers([...peSeries.markers() || [], data.marker]);
+        if (data.signal) updateSignal(data.signal);
+    }
 };
 
 function updateSignal(sig) {
