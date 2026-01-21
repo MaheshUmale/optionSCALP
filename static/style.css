@@ -109,6 +109,19 @@ body {
     to { transform: translateX(0); opacity: 1; }
 }
 
+.pnl-stats-overlay {
+    position: fixed;
+    top: 60px;
+    right: 20px;
+    background: rgba(30, 34, 45, 0.9);
+    padding: 10px 15px;
+    border: 1px solid #333;
+    border-radius: 8px;
+    z-index: 1000;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    backdrop-filter: blur(5px);
+}
+
 .fp-row {
     display: flex;
     border-bottom: 1px solid #222;
