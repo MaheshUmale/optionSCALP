@@ -43,6 +43,7 @@ class SessionState:
         self.last_idx_candle = None
         self.last_ce_candle = None
         self.last_pe_candle = None
+        self.last_total_volumes = {} # Track cumulative volumes to calculate deltas
 
 @app.get("/", response_class=HTMLResponse)
 async def get(request: Request):
@@ -253,12 +254,24 @@ def clean_json(obj):
 
 async def handle_live_update(websocket, state, update):
     if websocket.client_state != WebSocketState.CONNECTED: return
-    clean_symbol = update['symbol'].replace("NSE:", "")
+    symbol = update['symbol']
+    clean_symbol = symbol.replace("NSE:", "")
     is_index = clean_symbol == state.index_sym
     is_ce = clean_symbol == state.ce_sym
     is_pe = clean_symbol == state.pe_sym
 
     if not (is_index or is_ce or is_pe): return
+
+    # Volume handling: TradingView WebSocket provides cumulative day volume.
+    # We calculate the delta since the last update to get the volume for the current candle.
+    current_total_volume = update.get('volume')
+    last_total_volume = state.last_total_volumes.get(symbol)
+
+    volume_delta = 0
+    if current_total_volume is not None:
+        if last_total_volume is not None:
+            volume_delta = max(0, current_total_volume - last_total_volume)
+        state.last_total_volumes[symbol] = current_total_volume
 
     now = int(datetime.now().timestamp())
     interval_sec = 60 # Force 1-minute timeframe for all charts
@@ -269,7 +282,14 @@ async def handle_live_update(websocket, state, update):
     else: target_candle = state.last_pe_candle
 
     if target_candle is None or candle_time > target_candle['time']:
-        new_candle = {"time": candle_time, "open": update['price'], "high": update['price'], "low": update['price'], "close": update['price'], "volume": update['volume'] if update['volume'] else 0}
+        new_candle = {
+            "time": candle_time,
+            "open": update['price'],
+            "high": update['price'],
+            "low": update['price'],
+            "close": update['price'],
+            "volume": volume_delta
+        }
         if is_index: state.last_idx_candle = new_candle
         elif is_ce: state.last_ce_candle = new_candle
         else: state.last_pe_candle = new_candle
@@ -278,7 +298,7 @@ async def handle_live_update(websocket, state, update):
         target_candle['close'] = update['price']
         if update['price'] > target_candle['high']: target_candle['high'] = update['price']
         if update['price'] < target_candle['low']: target_candle['low'] = update['price']
-        if update['volume']: target_candle['volume'] = update['volume']
+        target_candle['volume'] += volume_delta
 
     await websocket.send_json(clean_json({
         "type": "live_update", "symbol": update['symbol'], "candle": target_candle,
