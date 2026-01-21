@@ -96,8 +96,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
 
-                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "CE")
-                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "PE")
+                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
+                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P")
 
                     ce_df = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
                     pe_df = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
@@ -162,7 +162,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Add some surrounding strikes for readiness
                     step = 100 if "BANK" in index_sym else 50
                     for offset in [-100, 100]:
-                        for ot in ["CE", "PE"]:
+                        for ot in ["C", "P"]:
                             symbols.append(f"NSE:{dm.get_option_symbol(index_sym, strike + offset, ot)}")
 
                     state.live_feed.start()
@@ -175,8 +175,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
                     strike = dm.get_atm_strike(state.replay_data_idx['close'].iloc[0], step=100 if "BANK" in index_sym else 50)
 
-                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "CE")
-                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "PE")
+                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
+                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P")
                     state.replay_data_ce = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
                     state.replay_data_pe = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
 

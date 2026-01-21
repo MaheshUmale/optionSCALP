@@ -44,6 +44,7 @@ class DataManager:
         # Let's stick to SYMBOL + YY + MM + DD + C/P + STRIKE
 
         sym = f"{index}{expiry}{opt_type}{int(strike)}"
+        print(f"Generated option symbol: {sym}")
         return sym
 
     def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100):
