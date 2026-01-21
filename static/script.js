@@ -10,11 +10,8 @@ function initCharts() {
         timeScale: { borderColor: '#2b2b3b', timeVisible: true, secondsVisible: false }
     };
 
-    const idxContainer = document.getElementById('index-chart');
-    const optContainer = document.getElementById('option-chart');
-
-    idxChart = LightweightCharts.createChart(idxContainer, chartOptions);
-    optChart = LightweightCharts.createChart(optContainer, chartOptions);
+    idxChart = LightweightCharts.createChart(document.getElementById('index-chart'), chartOptions);
+    optChart = LightweightCharts.createChart(document.getElementById('option-chart'), chartOptions);
 
     idxSeries = idxChart.addCandlestickSeries({
         upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
@@ -26,8 +23,8 @@ function initCharts() {
     });
 
     window.addEventListener('resize', () => {
-        idxChart.resize(idxContainer.clientWidth, idxContainer.clientHeight);
-        optChart.resize(optContainer.clientWidth, optContainer.clientHeight);
+        idxChart.resize(document.getElementById('index-chart').clientWidth, document.getElementById('index-chart').clientHeight);
+        optChart.resize(document.getElementById('option-chart').clientWidth, document.getElementById('option-chart').clientHeight);
     });
 }
 
@@ -35,45 +32,34 @@ ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
 
     if (data.type === 'live_data' || data.type === 'replay_step') {
-        let currentOptTime = null;
+        if (data.index_data) {
+            idxSeries.setData(data.index_data.map(d => ({
+                time: new Date(d.datetime).getTime() / 1000,
+                open: d.open, high: d.high, low: d.low, close: d.close
+            })));
+        }
 
-        if (data.index_data && data.index_data.length > 0 && idxSeries) {
-            const idxData = data.index_data.map(d => ({
+        if (data.option_data) {
+            const optMapped = data.option_data.map(d => ({
                 time: new Date(d.datetime).getTime() / 1000,
                 open: d.open, high: d.high, low: d.low, close: d.close
             }));
-            idxSeries.setData(idxData);
+            optSeries.setData(optMapped);
+
+            if (data.markers) {
+                optSeries.setMarkers(data.markers.map(m => ({
+                    ...m,
+                    time: new Date(m.time).getTime() / 1000
+                })));
+            }
         }
 
-        if (data.option_data && data.option_data.length > 0 && optSeries) {
-            const optData = data.option_data.map(d => ({
-                time: new Date(d.datetime).getTime() / 1000,
-                open: d.open, high: d.high, low: d.low, close: d.close
-            }));
-            optSeries.setData(optData);
-            currentOptTime = optData[optData.length-1].time;
-        }
-
-        if (data.footprint) {
-            updateFootprint(data.footprint);
-        }
-
-        if (data.signal && currentOptTime && optSeries) {
-            optSeries.setMarkers([{
-                time: currentOptTime,
-                position: "belowBar",
-                color: "#2196F3",
-                shape: "arrowUp",
-                text: "BUY SIGNAL"
-            }]);
-            updateSignal(data.signal);
-        }
+        if (data.footprint) updateFootprint(data.footprint);
+        if (data.signal) updateSignal(data.signal);
 
         document.getElementById('status').innerText = `Status: Connected | Sym: ${data.option_symbol || 'REPLAY'}`;
     }
 };
-
-ws.onopen = () => { document.getElementById('status').innerText = "Status: Connected"; };
 
 function updateFootprint(clusters) {
     const container = document.getElementById('footprint-container');
@@ -81,9 +67,9 @@ function updateFootprint(clusters) {
     clusters.sort((a,b) => b.price - a.price);
     clusters.forEach(c => {
         const row = document.createElement('div');
-        row.className = 'fp-row';
-        const buyImbalance = c.buy > c.sell * 3;
-        const sellImbalance = c.sell > c.buy * 3;
+        row.className = 'fp-row' + (c.is_poc ? ' fp-poc' : '');
+        const buyImbalance = c.buy > c.sell * 2.5 && c.buy > 10;
+        const sellImbalance = c.sell > c.buy * 2.5 && c.sell > 10;
         row.innerHTML = `
             <div class="fp-price">${c.price.toFixed(1)}</div>
             <div class="fp-sell ${sellImbalance ? 'imbalance' : ''}">${c.sell}</div>
@@ -96,6 +82,7 @@ function updateFootprint(clusters) {
 function updateSignal(sig) {
     const list = document.getElementById('signals-list');
     const div = document.createElement('div');
+    div.className = 'signal-item';
     div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>BUY</b> @ ${sig.entry_price} (SL: ${sig.sl})`;
     list.prepend(div);
 }
