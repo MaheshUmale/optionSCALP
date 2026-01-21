@@ -1,6 +1,10 @@
 class TrendFollowingStrategy:
     def __init__(self, symbol_type="BANKNIFTY"):
         self.symbol_type = symbol_type
+        self.update_params(symbol_type)
+
+    def update_params(self, symbol_type):
+        self.symbol_type = symbol_type
         self.target_range = (30, 40) if "BANKNIFTY" in symbol_type else (15, 20)
 
     def get_trend(self, index_df):

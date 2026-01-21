@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <title>OptionScalp Pro - Ultra Order Flow</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
     <div class="top-bar">
@@ -15,9 +15,10 @@
                 <option value="NIFTY">NIFTY</option>
             </select>
             <button onclick="fetchLive()">Go Live</button>
-            <button onclick="startReplay()">Play Replay</button>
+            <button onclick="startReplay()">Start Replay</button>
             <button onclick="pauseReplay()">Pause</button>
             <button onclick="stepReplay()">Step</button>
+            <input type="range" id="replay-slider" min="50" max="300" value="50" style="width: 150px; margin-left: 10px;" oninput="onSliderChange(this.value)">
         </div>
         <div id="status" class="status">System Ready</div>
     </div>
