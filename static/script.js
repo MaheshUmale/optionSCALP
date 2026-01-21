@@ -45,14 +45,14 @@ ws.onmessage = (event) => {
 
         if (data.index_data && idxSeries) {
             idxSeries.setData(data.index_data.map(d => ({
-                time: new Date(d.datetime).getTime() / 1000,
+                time: d.time,
                 open: d.open, high: d.high, low: d.low, close: d.close
             })));
         }
 
         if (data.option_data && optSeries) {
             const optMapped = data.option_data.map(d => ({
-                time: new Date(d.datetime).getTime() / 1000,
+                time: d.time,
                 open: d.open, high: d.high, low: d.low, close: d.close
             }));
             optSeries.setData(optMapped);
@@ -60,7 +60,7 @@ ws.onmessage = (event) => {
             if (data.markers && typeof optSeries.setMarkers === 'function') {
                 optSeries.setMarkers(data.markers.map(m => ({
                     ...m,
-                    time: new Date(m.time).getTime() / 1000
+                    time: m.time
                 })));
             }
         }
@@ -69,6 +69,15 @@ ws.onmessage = (event) => {
         if (data.signal) updateSignal(data.signal);
 
         document.getElementById('status').innerText = `Status: Connected | Sym: ${data.option_symbol || 'REPLAY'}`;
+    }
+
+    if (data.type === 'live_update') {
+        if (data.is_index && idxSeries) {
+            idxSeries.update(data.candle);
+        } else if (!data.is_index && optSeries) {
+            optSeries.update(data.candle);
+            if (data.footprint) updateFootprint(data.footprint);
+        }
     }
 };
 

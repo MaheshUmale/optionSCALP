@@ -9,69 +9,19 @@ import asyncio
 import pandas as pd
 import numpy as np
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-from data.gathering.tv_feed import TvFeed
+
+from data.gathering.data_manager import DataManager
+from data.gathering.live_feed import TradingViewLiveFeed
 from core.strategies.trend_following import TrendFollowingStrategy
 from tvDatafeed import Interval
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-
-class DataManager:
-    def __init__(self):
-        self.feed = TvFeed()
-
-    def get_atm_strike(self, spot_price, step=100):
-        return int(round(spot_price / step) * step)
-
-    def get_next_expiry(self, index="BANKNIFTY"):
-        today_str = datetime.now().strftime("%y%m%d")
-        print(f"Calculating next expiry for {index} as of {today_str}")
-        if "BANKNIFTY" in index:
-            # Monthly/Long expiries for BANKNIFTY 2026
-            expires = ["260127", "260224", "260326", "260330", "260331", "260630", "260929", "261229"]
-        else:
-            # Weekly expiries for NIFTY 2026
-            expires = [  "260127", "260203", "260210", "260217", "260224", "260326", "260330", "260331"]
-        for exp in expires:
-            if exp >= today_str:
-                return exp
-        return expires[-1]
-
-    def get_option_symbol(self, index, strike, opt_type, expiry=None):
-        if expiry is None:
-            expiry = self.get_next_expiry(index)
-        return f"{index}{expiry}{opt_type}{int(strike)}"
-
-    def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=1000):
-        df = None
-        try:
-            df = self.feed.get_historical_data(symbol, exchange="NSE", interval=interval, n_bars=n_bars)
-        except Exception as e:
-            print(f"TvFeed error: {e}")
-
-        if df is None or df.empty:
-            print(f"Warning: Generating mock data for {symbol}.")
-            start_price = 59000 if "BANKNIFTY" in symbol else 25000
-            if "C" in symbol or "P" in symbol: start_price = 300
-
-            freq = '1min' if interval == Interval.in_1_minute else '5min'
-            dates = pd.date_range(end=datetime.now().replace(second=0, microsecond=0), periods=n_bars, freq=freq)
-            prices = np.cumsum(np.random.normal(0, 5, n_bars)) + start_price
-            data = {
-                'open': prices,
-                'high': prices + np.random.uniform(2, 8, n_bars),
-                'low': prices - np.random.uniform(2, 8, n_bars),
-                'close': prices + np.random.normal(0, 3, n_bars),
-                'volume': np.random.randint(1000, 10000, n_bars)
-            }
-            df = pd.DataFrame(data, index=dates)
-            df.index.name = 'datetime'
-        return df
 
 dm = DataManager()
 strategy = TrendFollowingStrategy()
@@ -82,8 +32,13 @@ class SessionState:
         self.replay_data_idx = None
         self.replay_data_opt = None
         self.opt_sym = ""
+        self.index_sym = ""
         self.is_playing = False
+        self.is_live = False
         self.all_markers = []
+        self.live_feed = None
+        self.last_idx_candle = None
+        self.last_opt_candle = None
 
 @app.get("/", response_class=HTMLResponse)
 async def get(request: Request):
@@ -98,40 +53,66 @@ async def websocket_endpoint(websocket: WebSocket):
     async def listen_task():
         logger.info("Listen task started")
         try:
-            while True:
+            while websocket.client_state == WebSocketState.CONNECTED:
                 try:
                     msg = await websocket.receive_text()
                     logger.info(f"Received message: {msg}")
                     data = json.loads(msg)
                 except WebSocketDisconnect:
-                    print("WebSocket disconnected")
+                    logger.info("WebSocket disconnected")
                     break
                 except Exception as e:
-                    print(f"Message error: {e}")
+                    logger.error(f"Message error: {e}")
                     continue
 
                 if data['type'] == 'fetch_live':
-                    # print(f"Fetching live data for {data['index']}")
                     state.is_playing = False
-                    index_sym = data['index']
+                    state.is_live = True
+                    state.index_sym = data['index']
+                    index_sym = state.index_sym
                     strategy.update_params(index_sym)
+
+                    # Fetch current day's data (n_bars=1000 should cover it)
                     idx_df = dm.get_data(index_sym, interval=Interval.in_5_minute, n_bars=1000)
                     trend = strategy.get_trend(idx_df)
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
                     opt_type = "C" if trend == "BULLISH" else "P"
-                    opt_sym = dm.get_option_symbol(index_sym, strike, opt_type)
+                    state.opt_sym = dm.get_option_symbol(index_sym, strike, opt_type)
+                    opt_sym = state.opt_sym
                     opt_df = dm.get_data(opt_sym, interval=Interval.in_1_minute, n_bars=1000)
 
-                    state.opt_sym = opt_sym
                     state.all_markers = []
+                    state.last_idx_candle = idx_df.iloc[-1].to_dict()
+                    state.last_idx_candle['time'] = int(idx_df.index[-1].timestamp())
+                    state.last_opt_candle = opt_df.iloc[-1].to_dict()
+                    state.last_opt_candle['time'] = int(opt_df.index[-1].timestamp())
 
-                    await websocket.send_json({
+                    await websocket.send_json(clean_json({
                         "type": "live_data",
                         "index_data": format_records(idx_df),
                         "option_data": format_records(opt_df),
                         "option_symbol": opt_sym,
-                        "trend": trend
-                    })
+                        "trend": trend,
+                        "footprint": generate_footprint_clusters(opt_df.iloc[-1])
+                    }))
+
+                    # Setup Live Feed
+                    if state.live_feed:
+                        state.live_feed.stop()
+
+                    loop = asyncio.get_running_loop()
+                    def live_callback(update):
+                        asyncio.run_coroutine_threadsafe(
+                            handle_live_update(websocket, state, update),
+                            loop
+                        )
+
+                    state.live_feed = TradingViewLiveFeed(live_callback)
+                    # Symbols in TV are like NSE:NIFTY
+                    tv_index = f"NSE:{index_sym}"
+                    tv_option = f"NSE:{opt_sym}"
+                    state.live_feed.start()
+                    state.live_feed.add_symbols([tv_index, tv_option])
 
                 elif data['type'] == 'start_replay':
                     logger.info(f"Starting replay for {data['index']}")
@@ -176,7 +157,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async def replay_loop():
         try:
-            while True:
+            while websocket.client_state == WebSocketState.CONNECTED:
                 if state.is_playing and state.replay_data_opt is not None:
                     # print(f"Replay loop step: {state.replay_idx}")
                     if state.replay_idx < len(state.replay_data_opt):
@@ -186,13 +167,30 @@ async def websocket_endpoint(websocket: WebSocket):
                         state.is_playing = False
                 await asyncio.sleep(1)
         except Exception as e:
-            print(f"Replay Loop Error: {e}")
+            logger.error(f"Replay Loop Error: {e}")
 
-    await asyncio.gather(listen_task(), replay_loop())
+    try:
+        await asyncio.gather(listen_task(), replay_loop())
+    finally:
+        if state.live_feed:
+            state.live_feed.stop()
 
 def format_records(df):
-    recs = df.reset_index()
-    recs['datetime'] = recs['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+    """Formats DataFrame for UI with Unix timestamps (UTC)."""
+    recs = df.copy().reset_index()
+    # If the index is naive, assume it is UTC as tvDatafeed typically returns UTC for historical data
+    if recs['datetime'].dt.tz is None:
+        recs['datetime'] = recs['datetime'].dt.tz_localize('UTC')
+
+    # Add Unix timestamp in seconds for lightweight-charts
+    recs['time'] = recs['datetime'].apply(lambda x: int(x.timestamp()))
+
+    # Keep ISO string for reference if needed
+    recs['datetime_str'] = recs['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    # Convert datetime objects to string to avoid JSON serializable error
+    recs['datetime'] = recs['datetime_str']
+
     return recs.to_dict(orient='records')
 
 async def send_replay_step(websocket, state):
@@ -230,44 +228,111 @@ async def send_replay_step(websocket, state):
         "option_symbol": state.opt_sym
     }
 
-    # Ensure everything is JSON serializable
-    def clean_json(obj):
-        if isinstance(obj, dict):
-            return {k: clean_json(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [clean_json(i) for i in obj]
-        elif isinstance(obj, (np.float64, np.float32, np.float16)):
-            return float(obj)
-        elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8)):
-            return int(obj)
-        elif isinstance(obj, np.bool_):
-            return bool(obj)
-        elif isinstance(obj, bool):
-            return obj
-        return obj
-
     cleaned = clean_json(msg)
     await websocket.send_json(cleaned)
 
+def clean_json(obj):
+    if isinstance(obj, dict):
+        return {k: clean_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_json(i) for i in obj]
+    elif isinstance(obj, (np.float64, np.float32, np.float16)):
+        return float(obj)
+    elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8)):
+        return int(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, bool):
+        return obj
+    elif hasattr(obj, 'timestamp') and callable(obj.timestamp):
+        return int(obj.timestamp())
+    elif isinstance(obj, (pd.Timestamp, datetime)):
+        return obj.isoformat()
+    return obj
+
+async def handle_live_update(websocket, state, update):
+    if websocket.client_state != WebSocketState.CONNECTED: return
+
+    # update: {"symbol": "...", "price": ..., "volume": ..., "timestamp": ...}
+    is_index = state.index_sym in update['symbol']
+
+    # In a real app, we'd aggregate ticks into candles.
+    # For now, let's just update the last candle or create a new one if time has passed.
+    now = int(datetime.now().timestamp())
+    interval_sec = 300 if is_index else 60
+    candle_time = (now // interval_sec) * interval_sec
+
+    target_candle = state.last_idx_candle if is_index else state.last_opt_candle
+
+    if target_candle is None or candle_time > target_candle['time']:
+        # New candle
+        new_candle = {
+            "time": candle_time,
+            "open": update['price'],
+            "high": update['price'],
+            "low": update['price'],
+            "close": update['price'],
+            "volume": update['volume'] if update['volume'] else 0
+        }
+        if is_index: state.last_idx_candle = new_candle
+        else: state.last_opt_candle = new_candle
+        target_candle = new_candle
+    else:
+        # Update existing candle
+        target_candle['close'] = update['price']
+        if update['price'] > target_candle['high']: target_candle['high'] = update['price']
+        if update['price'] < target_candle['low']: target_candle['low'] = update['price']
+        if update['volume']: target_candle['volume'] = update['volume']
+
+    msg = {
+        "type": "live_update",
+        "symbol": update['symbol'],
+        "candle": target_candle,
+        "is_index": is_index
+    }
+
+    # If it's an option update, we might also want to send footprint
+    if not is_index:
+        msg["footprint"] = generate_footprint_clusters(target_candle)
+
+    await websocket.send_json(clean_json(msg))
+
 def generate_footprint_clusters(row):
-    price_step = 1.0
-    mid = (row['open'] + row['close']) / 2
-    low = (row['low'] // price_step) * price_step
-    high = (row['high'] // price_step) * price_step
-    clusters = []
-    curr = low
-    while curr <= high:
-        dist = max(0.1, 1.0 - abs(curr - mid) / (max(row['high'] - row['low'], 1)))
-        vol = int(row['volume'] * dist / 20)
-        dbias = (row['close'] - row['open']) / (max(row['high'] - row['low'], 1))
-        buy_v = int(vol * (0.5 + 0.2 * dbias))
-        sell_v = max(0, vol - buy_v)
-        clusters.append({
-            "price": round(curr, 1), "buy": buy_v, "sell": sell_v,
-            "is_poc": abs(curr - mid) < price_step
-        })
-        curr += price_step
-    return clusters
+    """Generates footprint clusters from a candle row (Series or dict)."""
+    try:
+        price_step = 1.0
+        # Handle both pandas Series and dict
+        open_p = row.get('open') if isinstance(row, dict) else row['open']
+        close_p = row.get('close') if isinstance(row, dict) else row['close']
+        high_p = row.get('high') if isinstance(row, dict) else row['high']
+        low_p = row.get('low') if isinstance(row, dict) else row['low']
+        volume = row.get('volume') if isinstance(row, dict) else row['volume']
+
+        mid = (open_p + close_p) / 2
+        low_bound = (low_p // price_step) * price_step
+        high_bound = (high_p // price_step) * price_step
+
+        clusters = []
+        curr = low_bound
+        range_val = max(high_p - low_p, 1.0)
+
+        while curr <= high_bound:
+            dist = max(0.1, 1.0 - abs(curr - mid) / range_val)
+            vol = int(volume * dist / 20)
+            dbias = (close_p - open_p) / range_val
+            buy_v = int(vol * (0.5 + 0.2 * dbias))
+            sell_v = max(0, vol - buy_v)
+            clusters.append({
+                "price": round(float(curr), 1),
+                "buy": int(buy_v),
+                "sell": int(sell_v),
+                "is_poc": abs(curr - mid) < price_step
+            })
+            curr += price_step
+        return clusters
+    except Exception as e:
+        logger.error(f"Error generating footprint: {e}")
+        return []
 
 if __name__ == "__main__":
     uvicorn.run(app, host="localhost", port=8000)
