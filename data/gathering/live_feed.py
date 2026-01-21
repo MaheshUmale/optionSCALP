@@ -123,10 +123,10 @@ class TradingViewLiveFeed:
                             self.send_ping_packet(result)
             except Exception as e:
                 if self.is_running:
-                    logger.error(f"LiveFeed Error: {e}. Reconnecting in 5s...")
+                    logger.error(f"LiveFeed Error: {e}. Reconnecting in 3s...")
                     # Attempt reconnect
                     import time
-                    time.sleep(5)
+                    time.sleep(3)
                     try:
                         self.connect()
                         for sym in self.symbols:
