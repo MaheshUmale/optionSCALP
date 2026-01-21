@@ -1,31 +1,50 @@
 const ws = new WebSocket(`ws://${window.location.host}/ws`);
 
-let idxChart, optChart, idxSeries, optSeries;
+let idxChart, ceChart, peChart;
+let idxSeries, ceSeries, peSeries;
+let idxVolSeries, ceVolSeries, peVolSeries;
 
 function initCharts() {
     const chartOptions = {
         layout: { background: { type: 'solid', color: '#0c0d10' }, textColor: '#d1d4dc' },
         grid: { vertLines: { color: '#1a1b22' }, horzLines: { color: '#1a1b22' } },
-        crosshair: { mode: 1 }, // CrosshairMode.Normal
+        crosshair: { mode: 1 },
         timeScale: { borderColor: '#2b2b3b', timeVisible: true, secondsVisible: false },
         localization: { locale: 'en-US' }
     };
 
     idxChart = LightweightCharts.createChart(document.getElementById('index-chart'), chartOptions);
-    optChart = LightweightCharts.createChart(document.getElementById('option-chart'), chartOptions);
+    ceChart = LightweightCharts.createChart(document.getElementById('ce-chart'), chartOptions);
+    peChart = LightweightCharts.createChart(document.getElementById('pe-chart'), chartOptions);
 
-    idxSeries = idxChart.addCandlestickSeries({
+    const candleStyle = {
         upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
         wickUpColor: '#26a69a', wickDownColor: '#ef5350'
-    });
-    optSeries = optChart.addCandlestickSeries({
-        upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-        wickUpColor: '#26a69a', wickDownColor: '#ef5350'
-    });
+    };
+
+    idxSeries = idxChart.addCandlestickSeries(candleStyle);
+    ceSeries = ceChart.addCandlestickSeries(candleStyle);
+    peSeries = peChart.addCandlestickSeries(candleStyle);
+
+    const volStyle = {
+        color: '#26a69a',
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+        scaleMargins: { top: 0.8, bottom: 0 },
+    };
+
+    idxVolSeries = idxChart.addHistogramSeries(volStyle);
+    ceVolSeries = ceChart.addHistogramSeries(volStyle);
+    peVolSeries = peChart.addHistogramSeries(volStyle);
 
     window.addEventListener('resize', () => {
-        idxChart.resize(document.getElementById('index-chart').clientWidth, document.getElementById('index-chart').clientHeight);
-        optChart.resize(document.getElementById('option-chart').clientWidth, document.getElementById('option-chart').clientHeight);
+        const resize = (chart, id) => {
+            const el = document.getElementById(id);
+            if (el) chart.resize(el.clientWidth, el.clientHeight);
+        };
+        resize(idxChart, 'index-chart');
+        resize(ceChart, 'ce-chart');
+        resize(peChart, 'pe-chart');
     });
 }
 
@@ -40,7 +59,7 @@ ws.onmessage = (event) => {
 
     if (data.type === 'live_data' || data.type === 'replay_step') {
         if (data.type === 'replay_step') {
-            document.getElementById('replay-slider').value = data.option_data.length;
+            document.getElementById('replay-slider').value = data.max_idx || 0;
         }
 
         if (data.index_data && idxSeries) {
@@ -48,56 +67,56 @@ ws.onmessage = (event) => {
                 time: d.time,
                 open: d.open, high: d.high, low: d.low, close: d.close
             })));
+            idxVolSeries.setData(data.index_data.map(d => ({
+                time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
+            })));
         }
 
-        if (data.option_data && optSeries) {
-            const optMapped = data.option_data.map(d => ({
+        if (data.ce_data && ceSeries) {
+            ceSeries.setData(data.ce_data.map(d => ({
                 time: d.time,
                 open: d.open, high: d.high, low: d.low, close: d.close
-            }));
-            optSeries.setData(optMapped);
-
-            if (data.markers && typeof optSeries.setMarkers === 'function') {
-                optSeries.setMarkers(data.markers.map(m => ({
-                    ...m,
-                    time: m.time
-                })));
-            }
+            })));
+            ceVolSeries.setData(data.ce_data.map(d => ({
+                time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
+            })));
+            if (data.ce_markers) ceSeries.setMarkers(data.ce_markers);
         }
 
-        if (data.footprint) updateFootprint(data.footprint);
+        if (data.pe_data && peSeries) {
+            peSeries.setData(data.pe_data.map(d => ({
+                time: d.time,
+                open: d.open, high: d.high, low: d.low, close: d.close
+            })));
+            peVolSeries.setData(data.pe_data.map(d => ({
+                time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
+            })));
+            if (data.pe_markers) peSeries.setMarkers(data.pe_markers);
+        }
+
+        if (data.ce_symbol) document.getElementById('ce-label').innerText = `CE OPTION: ${data.ce_symbol}`;
+        if (data.pe_symbol) document.getElementById('pe-label').innerText = `PE OPTION: ${data.pe_symbol}`;
         if (data.signal) updateSignal(data.signal);
 
-        document.getElementById('status').innerText = `Status: Connected | Sym: ${data.option_symbol || 'REPLAY'}`;
+        document.getElementById('status').innerText = `Status: Connected | Trend: ${data.trend || 'N/A'}`;
     }
 
     if (data.type === 'live_update') {
-        if (data.is_index && idxSeries) {
-            idxSeries.update(data.candle);
-        } else if (!data.is_index && optSeries) {
-            optSeries.update(data.candle);
-            if (data.footprint) updateFootprint(data.footprint);
+        const c = data.candle;
+        const v = { time: c.time, value: c.volume, color: c.close >= c.open ? '#26a69a' : '#ef5350' };
+
+        if (data.is_index) {
+            idxSeries.update(c);
+            idxVolSeries.update(v);
+        } else if (data.is_ce) {
+            ceSeries.update(c);
+            ceVolSeries.update(v);
+        } else if (data.is_pe) {
+            peSeries.update(c);
+            peVolSeries.update(v);
         }
     }
 };
-
-function updateFootprint(clusters) {
-    const container = document.getElementById('footprint-container');
-    container.innerHTML = '';
-    clusters.sort((a,b) => b.price - a.price);
-    clusters.forEach(c => {
-        const row = document.createElement('div');
-        row.className = 'fp-row' + (c.is_poc ? ' fp-poc' : '');
-        const buyImbalance = c.buy > c.sell * 2.5 && c.buy > 10;
-        const sellImbalance = c.sell > c.buy * 2.5 && c.sell > 10;
-        row.innerHTML = `
-            <div class="fp-price">${c.price.toFixed(1)}</div>
-            <div class="fp-sell ${sellImbalance ? 'imbalance' : ''}">${c.sell}</div>
-            <div class="fp-buy ${buyImbalance ? 'imbalance' : ''}">${c.buy}</div>
-        `;
-        container.appendChild(row);
-    });
-}
 
 function updateSignal(sig) {
     const list = document.getElementById('signals-list');

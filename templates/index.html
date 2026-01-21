@@ -25,16 +25,21 @@
 
     <div class="main-container">
         <div class="chart-section">
-            <div id="index-chart" class="chart-box"></div>
-            <div id="option-chart" class="chart-box"></div>
+            <div class="chart-container">
+                <div class="chart-label">INDEX</div>
+                <div id="index-chart" class="chart-box"></div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-label" id="ce-label">CE OPTION</div>
+                <div id="ce-chart" class="chart-box"></div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-label" id="pe-label">PE OPTION</div>
+                <div id="pe-chart" class="chart-box"></div>
+            </div>
         </div>
 
         <div class="side-panel">
-            <div class="panel-header">FOOTPRINT / ORDER FLOW</div>
-            <div id="footprint-container" class="footprint-view">
-                <!-- Footprint cells go here -->
-            </div>
-
             <div class="panel-header">SIGNALS</div>
             <div id="signals-list" class="signals-view"></div>
 
