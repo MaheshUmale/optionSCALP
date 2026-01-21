@@ -167,6 +167,10 @@ ws.onmessage = (event) => {
         updatePCRInsights(data.pcr_insights);
     }
 
+        if (data.pnl_stats) {
+            updatePnLStats(data.pnl_stats);
+        }
+
     if (data.type === 'marker_update') {
         if (data.is_ce) ceSeries.setMarkers([...ceSeries.markers() || [], data.marker]);
         if (data.is_pe) peSeries.setMarkers([...peSeries.markers() || [], data.marker]);
@@ -204,6 +208,32 @@ function updatePCRInsights(pcr) {
     statusEl.innerHTML = `${currentText} | ${trendText} | PCR: ${pcr.pcr} (${pcr.pcr_change > 1 ? '▲' : '▼'})${buildup}`;
 }
 
+function updatePnLStats(stats) {
+    let statsEl = document.getElementById('pnl-stats');
+    if (!statsEl) {
+        statsEl = document.createElement('div');
+        statsEl.id = 'pnl-stats';
+        statsEl.className = 'pnl-stats-overlay';
+        document.body.appendChild(statsEl);
+    }
+    if (!stats) {
+        statsEl.innerHTML = `
+            <div style="font-size: 10px; color: #888;">PnL STATS</div>
+            <div style="font-size: 16px; font-weight: bold; color: #888;">₹0.00</div>
+            <div style="font-size: 11px;">Closed: 0 | Open: 0</div>
+            <div style="font-size: 11px;">Win: 0 | Loss: 0 | WR: 0%</div>
+        `;
+        return;
+    }
+    const color = stats.total_pnl >= 0 ? '#26a69a' : '#ef5350';
+    statsEl.innerHTML = `
+        <div style="font-size: 10px; color: #888;">PnL STATS (Closed)</div>
+        <div style="font-size: 18px; font-weight: bold; color: ${color};">₹${stats.total_pnl.toFixed(2)}</div>
+        <div style="font-size: 11px;">Closed: ${stats.total_closed} | Open: ${stats.total_trades - stats.total_closed}</div>
+        <div style="font-size: 11px;">Win: ${stats.win_count} | Loss: ${stats.loss_count} | WR: ${stats.win_rate}%</div>
+    `;
+}
+
 function fetchLive() { ws.send(JSON.stringify({ type: 'fetch_live', index: document.getElementById('index-select').value })); }
 function startReplay() {
     ws.send(JSON.stringify({
@@ -217,4 +247,7 @@ function stepReplay() { ws.send(JSON.stringify({ type: 'step_replay' })); }
 function setReplaySpeed(val) { ws.send(JSON.stringify({ type: 'set_replay_speed', speed: parseFloat(val) })); }
 function onSliderChange(val) { ws.send(JSON.stringify({ type: 'set_replay_index', index: parseInt(val) })); }
 
-window.onload = initCharts;
+window.onload = () => {
+    initCharts();
+    updatePnLStats(null);
+};
