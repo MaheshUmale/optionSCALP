@@ -19,6 +19,7 @@ from data.gathering.live_feed import TradingViewLiveFeed
 from core.strategies.trend_following import TrendFollowingStrategy
 from core.strategies.delta_volume_strategy import DeltaVolumeStrategy
 from trendlyne_client import TrendlyneClient
+from trendlyneAdvClient import TrendlyneScalper
 from tvDatafeed import Interval
 
 app = FastAPI()
@@ -29,6 +30,7 @@ dm = DataManager()
 strategy = TrendFollowingStrategy()
 delta_strategy = DeltaVolumeStrategy()
 tl_client = TrendlyneClient()
+tl_adv = TrendlyneScalper()
 
 class SessionState:
     def __init__(self):
@@ -52,6 +54,7 @@ class SessionState:
         self.ce_history = []
         self.pe_history = []
         self.last_total_volumes = {} # Track cumulative volumes to calculate deltas
+        self.pcr_insights = None
 
 @app.get("/", response_class=HTMLResponse)
 async def get_live(request: Request):
@@ -133,8 +136,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         if pe_setup:
                             state.pe_markers.append({"time": pe_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "PE BUY"})
 
-                    # Fetch Delta Volume signals from Trendlyne
+                    # Fetch Delta Volume signals and PCR Insights from Trendlyne
                     delta_signals = await fetch_trendlyne_signals(index_sym, strike)
+                    state.pcr_insights = await fetch_pcr_insights(index_sym)
 
                     await websocket.send_json(clean_json({
                         "type": "live_data",
@@ -145,8 +149,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         "pe_markers": state.pe_markers,
                         "ce_symbol": state.ce_sym,
                         "pe_symbol": state.pe_sym,
-                        "trend": strategy.get_trend(idx_df),
-                        "delta_signals": delta_signals
+                        "trend": strategy.get_trend(idx_df, state.pcr_insights),
+                        "delta_signals": delta_signals,
+                        "pcr_insights": state.pcr_insights
                     }))
 
                     if state.live_feed: state.live_feed.stop()
@@ -254,7 +259,7 @@ async def send_replay_step(websocket, state):
     sub_idx = state.replay_data_idx[state.replay_data_idx.index <= last_time]
     if len(sub_idx) < 10: sub_idx = state.replay_data_idx.iloc[:10]
 
-    trend = strategy.get_trend(sub_idx)
+    trend = strategy.get_trend(sub_idx, state.pcr_insights)
     ce_setup = strategy.check_setup(sub_ce, trend, "CE")
     pe_setup = strategy.check_setup(sub_pe, trend, "PE")
 
@@ -300,6 +305,50 @@ def clean_json(obj):
     elif isinstance(obj, (pd.Timestamp, datetime)):
         return obj.isoformat()
     return obj
+
+async def fetch_pcr_insights(index_sym):
+    """Fetches PCR and OI insights using TrendlyneAdvClient."""
+    try:
+        stock_id = await tl_adv.get_stock_id(index_sym)
+        expiries = await tl_adv.get_expiry_data(stock_id)
+
+        t_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        valid = []
+        for e in expiries["expiresDts"]:
+            try:
+                dt = datetime.strptime(e, "%d-%b-%Y")
+            except ValueError:
+                dt = datetime.strptime(e, "%Y-%m-%d")
+            if dt >= t_date:
+                valid.append(dt)
+
+        if not valid: return None
+        target_dt = valid[0]
+        api_expiry_str = target_dt.strftime("%Y-%m-%d")
+
+        live_data = await tl_adv.get_live_oi_snapshot(stock_id, api_expiry_str)
+        insights = tl_adv.extract_writer_insights(live_data) or {}
+
+        # Fetch 5m buildup for index trend confirmation
+        buildup = await tl_adv.get_buildup_5m(target_dt, index_sym)
+        if buildup and len(buildup) > 0:
+            # Based on sample output, latest bars are likely at the beginning or end.
+            # Usually, the most recent 5m candle is what we want.
+            # If the API returns newest first (as per sample), use buildup[0].
+            # Let's check the sample again: 15:25 is at the top.
+            latest = buildup[0]
+            # Sample row: ['15:25 TO 15:30', 'Short Covering', ...]
+            # If it's a list:
+            if isinstance(latest, list) and len(latest) > 1:
+                insights['buildup_status'] = latest[1]
+            # If it's a dict (sometimes APIs return objects):
+            elif isinstance(latest, dict):
+                insights['buildup_status'] = latest.get('status') or latest.get('buildup_type')
+
+        return insights
+    except Exception as e:
+        logger.error(f"Error fetching PCR insights: {e}")
+    return None
 
 async def fetch_trendlyne_signals(index_sym, atm_strike):
     """
@@ -396,7 +445,7 @@ async def handle_live_update(websocket, state, update):
             if is_ce or is_pe:
                 if len(state.idx_history) > 20:
                     idx_df = pd.DataFrame(state.idx_history)
-                    trend = strategy.get_trend(idx_df)
+                    trend = strategy.get_trend(idx_df, state.pcr_insights)
                     opt_df = pd.DataFrame(state.ce_history if is_ce else state.pe_history)
                     setup = strategy.check_setup(opt_df, trend, "CE" if is_ce else "PE")
                     if setup:
@@ -420,13 +469,16 @@ async def handle_live_update(websocket, state, update):
         else: state.last_pe_candle = new_candle
         target_candle = new_candle
 
-        # Every new candle, also refresh Trendlyne signals if in live mode
+        # Every new candle, also refresh Trendlyne signals and PCR if in live mode
         if is_index:
             strike = dm.get_atm_strike(update['price'], step=100 if "BANK" in clean_symbol else 50)
             delta_signals = await fetch_trendlyne_signals(clean_symbol, strike)
+            state.pcr_insights = await fetch_pcr_insights(clean_symbol)
             await websocket.send_json(clean_json({
                 "type": "delta_signals",
-                "delta_signals": delta_signals
+                "delta_signals": delta_signals,
+                "pcr_insights": state.pcr_insights,
+                "trend": strategy.get_trend(pd.DataFrame(state.idx_history), state.pcr_insights) if state.idx_history else None
             }))
     else:
         target_candle['close'] = update['price']
