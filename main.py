@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 from data.gathering.data_manager import DataManager
 from data.gathering.live_feed import TradingViewLiveFeed
 from core.strategies.trend_following import TrendFollowingStrategy
+from core.strategies.delta_volume_strategy import DeltaVolumeStrategy
+from trendlyne_client import TrendlyneClient
 from tvDatafeed import Interval
 
 app = FastAPI()
@@ -25,6 +27,8 @@ templates = Jinja2Templates(directory="templates")
 
 dm = DataManager()
 strategy = TrendFollowingStrategy()
+delta_strategy = DeltaVolumeStrategy()
+tl_client = TrendlyneClient()
 
 class SessionState:
     def __init__(self):
@@ -46,8 +50,12 @@ class SessionState:
         self.last_total_volumes = {} # Track cumulative volumes to calculate deltas
 
 @app.get("/", response_class=HTMLResponse)
-async def get(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+async def get_live(request: Request):
+    return templates.TemplateResponse("live.html", {"request": request})
+
+@app.get("/replay", response_class=HTMLResponse)
+async def get_replay(request: Request):
+    return templates.TemplateResponse("replay.html", {"request": request})
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -76,6 +84,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.index_sym = data['index']
                     index_sym = state.index_sym
                     strategy.update_params(index_sym)
+                    delta_strategy.update_params(index_sym)
 
                     idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
@@ -96,6 +105,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.last_pe_candle = pe_df.iloc[-1].to_dict()
                     state.last_pe_candle['time'] = int(pe_df.index[-1].timestamp()) + 19800
 
+                    # Fetch Delta Volume signals from Trendlyne
+                    delta_signals = await fetch_trendlyne_signals(index_sym, strike)
+
                     await websocket.send_json(clean_json({
                         "type": "live_data",
                         "index_data": format_records(idx_df),
@@ -103,7 +115,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         "pe_data": format_records(pe_df),
                         "ce_symbol": state.ce_sym,
                         "pe_symbol": state.pe_sym,
-                        "trend": strategy.get_trend(idx_df)
+                        "trend": strategy.get_trend(idx_df),
+                        "delta_signals": delta_signals
                     }))
 
                     if state.live_feed: state.live_feed.stop()
@@ -254,6 +267,53 @@ def clean_json(obj):
         return obj.isoformat()
     return obj
 
+async def fetch_trendlyne_signals(index_sym, atm_strike):
+    """
+    Fetches 5m buildup data for ATM and surrounding strikes and processes them.
+    Uses async httpx to avoid blocking the event loop.
+    """
+    try:
+        # Get expiry dynamically
+        stock_id = await tl_client.get_stock_id_for_symbol(index_sym)
+        expiry_list = await tl_client.get_expiry_dates(stock_id)
+        if not expiry_list:
+            expiry = "27-jan-2026-near" # Fallback if API fails
+        else:
+            # Map Trendlyne expiry format to URL format
+            # e.g. "2026-01-27" -> "27-jan-2026-near"
+            raw_expiry = expiry_list[0] # nearest
+            dt = datetime.strptime(raw_expiry, "%Y-%m-%d")
+            expiry = dt.strftime("%d-%b-%Y").lower() + "-near"
+
+        call_data = {}
+        put_data = {}
+
+        step = 100 if "BANK" in index_sym else 50
+        # ATM, 1 ITM, 1 OTM (The Battleground Cluster)
+        strikes_to_check = [atm_strike - step, atm_strike, atm_strike + step]
+
+        tasks = []
+        for s in strikes_to_check:
+            tasks.append(tl_client.get_buildup_5m_data(expiry, index_sym, s, "call"))
+            tasks.append(tl_client.get_buildup_5m_data(expiry, index_sym, s, "put"))
+
+        responses = await asyncio.gather(*tasks)
+
+        for i, resp in enumerate(responses):
+            strike = strikes_to_check[i // 2]
+            opt_type = "call" if i % 2 == 0 else "put"
+            if resp and 'body' in resp and 'data' in resp['body']:
+                if opt_type == "call":
+                    call_data[str(strike)] = resp['body']['data']
+                else:
+                    put_data[str(strike)] = resp['body']['data']
+
+        signals = delta_strategy.get_buy_signal(atm_strike, call_data, put_data)
+        return signals
+    except Exception as e:
+        logger.error(f"Error fetching Trendlyne signals: {e}")
+        return None
+
 async def handle_live_update(websocket, state, update):
     if websocket.client_state != WebSocketState.CONNECTED: return
     symbol = update['symbol']
@@ -299,6 +359,15 @@ async def handle_live_update(websocket, state, update):
         elif is_ce: state.last_ce_candle = new_candle
         else: state.last_pe_candle = new_candle
         target_candle = new_candle
+
+        # Every new candle, also refresh Trendlyne signals if in live mode
+        if is_index:
+            strike = dm.get_atm_strike(update['price'], step=100 if "BANK" in clean_symbol else 50)
+            delta_signals = await fetch_trendlyne_signals(clean_symbol, strike)
+            await websocket.send_json(clean_json({
+                "type": "delta_signals",
+                "delta_signals": delta_signals
+            }))
     else:
         target_candle['close'] = update['price']
         if update['price'] > target_candle['high']: target_candle['high'] = update['price']
