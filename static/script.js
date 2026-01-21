@@ -37,6 +37,30 @@ function initCharts() {
     ceVolSeries = ceChart.addHistogramSeries(volStyle);
     peVolSeries = peChart.addHistogramSeries(volStyle);
 
+    // Synchronize crosshairs and time scales
+    const charts = [idxChart, ceChart, peChart];
+
+    charts.forEach((chart, index) => {
+        const others = charts.filter((_, i) => i !== index);
+
+        // Sync Crosshair
+        chart.subscribeCrosshairMove(param => {
+            if (param.time) {
+                others.forEach(c => c.setCrosshairPosition(undefined, param.time, undefined));
+            } else {
+                others.forEach(c => c.clearCrosshairPosition());
+            }
+        });
+
+        // Sync Time Scale
+        chart.timeScale().subscribeVisibleTimeRangeChange(range => {
+            if (!range) return;
+            others.forEach(c => {
+                c.timeScale().setVisibleRange(range);
+            });
+        });
+    });
+
     window.addEventListener('resize', () => {
         const resize = (chart, id) => {
             const el = document.getElementById(id);
