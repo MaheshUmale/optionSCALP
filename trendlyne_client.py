@@ -22,7 +22,7 @@ class TrendlyneClient:
         search_url = f"{self.base_url}/search-contract-stock/"
         params = {'query': s.lower()}
         try:
-            response = requests.get(search_url, params=params, timeout=10)
+            response = await self.async_client.get(search_url, params=params)
             response.raise_for_status()
             data = response.json()
             if data and 'body' in data and 'data' in data['body'] and len(data['body']['data']) > 0:
@@ -83,7 +83,7 @@ class TrendlyneClient:
         }
         try:
             print(f"[Trendlyne] Fetching 5m buildup data from {url}")
-            response = requests.get(url, params=params, timeout=10)
+            response = await self.async_client.get(url, params=params)
             response.raise_for_status()
             return response.json()
         except Exception as e:

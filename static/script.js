@@ -116,6 +116,10 @@ ws.onmessage = (event) => {
             peVolSeries.update(v);
         }
     }
+
+    if (data.type === 'delta_signals' && data.delta_signals) {
+        updateDeltaSignal(data.delta_signals);
+    }
 };
 
 function updateSignal(sig) {
@@ -123,6 +127,16 @@ function updateSignal(sig) {
     const div = document.createElement('div');
     div.className = 'signal-item';
     div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>BUY</b> @ ${sig.entry_price} (SL: ${sig.sl})`;
+    list.prepend(div);
+}
+
+function updateDeltaSignal(sig) {
+    const list = document.getElementById('signals-list');
+    const div = document.createElement('div');
+    div.className = 'signal-item delta-signal';
+    const color = sig.type === 'BULLISH' ? '#26a69a' : '#ef5350';
+    div.style.borderLeft = `4px solid ${color}`;
+    div.innerHTML = `[${new Date().toLocaleTimeString()}] <b>${sig.type}</b> (Delta: ${sig.net_delta.toFixed(0)})<br>Strikes: ${sig.strikes.join(', ')}`;
     list.prepend(div);
 }
 
