@@ -4,14 +4,17 @@ let idxChart, optChart, idxSeries, optSeries;
 
 function initCharts() {
     const chartOptions = {
-        layout: { background: { color: '#0c0d10' }, textColor: '#d1d4dc' },
+        layout: { background: { type: 'solid', color: '#0c0d10' }, textColor: '#d1d4dc' },
         grid: { vertLines: { color: '#1a1b22' }, horzLines: { color: '#1a1b22' } },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
         timeScale: { borderColor: '#2b2b3b', timeVisible: true, secondsVisible: false }
     };
 
-    idxChart = LightweightCharts.createChart(document.getElementById('index-chart'), chartOptions);
-    optChart = LightweightCharts.createChart(document.getElementById('option-chart'), chartOptions);
+    const idxContainer = document.getElementById('index-chart');
+    const optContainer = document.getElementById('option-chart');
+
+    idxChart = LightweightCharts.createChart(idxContainer, chartOptions);
+    optChart = LightweightCharts.createChart(optContainer, chartOptions);
 
     idxSeries = idxChart.addCandlestickSeries({
         upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
@@ -23,8 +26,8 @@ function initCharts() {
     });
 
     window.addEventListener('resize', () => {
-        idxChart.resize(document.getElementById('index-chart').clientWidth, document.getElementById('index-chart').clientHeight);
-        optChart.resize(document.getElementById('option-chart').clientWidth, document.getElementById('option-chart').clientHeight);
+        idxChart.resize(idxContainer.clientWidth, idxContainer.clientHeight);
+        optChart.resize(optContainer.clientWidth, optContainer.clientHeight);
     });
 }
 
@@ -34,7 +37,7 @@ ws.onmessage = (event) => {
     if (data.type === 'live_data' || data.type === 'replay_step') {
         let currentOptTime = null;
 
-        if (data.index_data && data.index_data.length > 0) {
+        if (data.index_data && data.index_data.length > 0 && idxSeries) {
             const idxData = data.index_data.map(d => ({
                 time: new Date(d.datetime).getTime() / 1000,
                 open: d.open, high: d.high, low: d.low, close: d.close
@@ -42,7 +45,7 @@ ws.onmessage = (event) => {
             idxSeries.setData(idxData);
         }
 
-        if (data.option_data && data.option_data.length > 0) {
+        if (data.option_data && data.option_data.length > 0 && optSeries) {
             const optData = data.option_data.map(d => ({
                 time: new Date(d.datetime).getTime() / 1000,
                 open: d.open, high: d.high, low: d.low, close: d.close
@@ -55,7 +58,7 @@ ws.onmessage = (event) => {
             updateFootprint(data.footprint);
         }
 
-        if (data.signal && currentOptTime) {
+        if (data.signal && currentOptTime && optSeries) {
             optSeries.setMarkers([{
                 time: currentOptTime,
                 position: "belowBar",
