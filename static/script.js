@@ -37,6 +37,30 @@ function initCharts() {
     ceVolSeries = ceChart.addHistogramSeries(volStyle);
     peVolSeries = peChart.addHistogramSeries(volStyle);
 
+    // Synchronize crosshairs and time scales
+    const charts = [idxChart, ceChart, peChart];
+
+    charts.forEach((chart, index) => {
+        const others = charts.filter((_, i) => i !== index);
+
+        // Sync Crosshair
+        chart.subscribeCrosshairMove(param => {
+            if (param.time) {
+                others.forEach(c => c.setCrosshairPosition(undefined, param.time, undefined));
+            } else {
+                others.forEach(c => c.clearCrosshairPosition());
+            }
+        });
+
+        // Sync Time Scale
+        chart.timeScale().subscribeVisibleTimeRangeChange(range => {
+            if (!range) return;
+            others.forEach(c => {
+                c.timeScale().setVisibleRange(range);
+            });
+        });
+    });
+
     window.addEventListener('resize', () => {
         const resize = (chart, id) => {
             const el = document.getElementById(id);
@@ -119,6 +143,12 @@ ws.onmessage = (event) => {
 
     if (data.type === 'delta_signals' && data.delta_signals) {
         updateDeltaSignal(data.delta_signals);
+    }
+
+    if (data.type === 'marker_update') {
+        if (data.is_ce) ceSeries.setMarkers([...ceSeries.markers() || [], data.marker]);
+        if (data.is_pe) peSeries.setMarkers([...peSeries.markers() || [], data.marker]);
+        if (data.signal) updateSignal(data.signal);
     }
 };
 

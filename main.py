@@ -48,6 +48,9 @@ class SessionState:
         self.last_idx_candle = None
         self.last_ce_candle = None
         self.last_pe_candle = None
+        self.idx_history = []
+        self.ce_history = []
+        self.pe_history = []
         self.last_total_volumes = {} # Track cumulative volumes to calculate deltas
 
 @app.get("/", response_class=HTMLResponse)
@@ -96,15 +99,37 @@ async def websocket_endpoint(websocket: WebSocket):
                     ce_df = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
                     pe_df = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
 
+                    # Seed history for live strategy calculation
+                    idx_recs = format_records(idx_df)
+                    ce_recs = format_records(ce_df)
+                    pe_recs = format_records(pe_df)
+
+                    state.idx_history = idx_recs[-100:]
+                    state.ce_history = ce_recs[-100:]
+                    state.pe_history = pe_recs[-100:]
+
                     state.ce_markers = []
                     state.pe_markers = []
 
-                    state.last_idx_candle = idx_df.iloc[-1].to_dict()
-                    state.last_idx_candle['time'] = int(idx_df.index[-1].timestamp()) + 19800
-                    state.last_ce_candle = ce_df.iloc[-1].to_dict()
-                    state.last_ce_candle['time'] = int(ce_df.index[-1].timestamp()) + 19800
-                    state.last_pe_candle = pe_df.iloc[-1].to_dict()
-                    state.last_pe_candle['time'] = int(pe_df.index[-1].timestamp()) + 19800
+                    state.last_idx_candle = idx_recs[-1]
+                    state.last_ce_candle = ce_recs[-1]
+                    state.last_pe_candle = pe_recs[-1]
+
+                    # Pre-calculate historical signals for the chart
+
+                    for i in range(20, len(ce_df)):
+                        last_time = ce_df.index[i]
+                        sub_idx = idx_df[idx_df.index <= last_time]
+                        if len(sub_idx) < 10: continue
+
+                        trend = strategy.get_trend(sub_idx)
+                        ce_setup = strategy.check_setup(ce_df.iloc[:i+1], trend)
+                        pe_setup = strategy.check_setup(pe_df.iloc[:i+1], trend)
+
+                        if ce_setup:
+                            state.ce_markers.append({"time": ce_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"})
+                        if pe_setup:
+                            state.pe_markers.append({"time": pe_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"})
 
                     # Fetch Delta Volume signals from Trendlyne
                     delta_signals = await fetch_trendlyne_signals(index_sym, strike)
@@ -112,8 +137,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json(clean_json({
                         "type": "live_data",
                         "index_data": format_records(idx_df),
-                        "ce_data": format_records(ce_df),
-                        "pe_data": format_records(pe_df),
+                        "ce_data": ce_recs,
+                        "pe_data": pe_recs,
+                        "ce_markers": state.ce_markers,
+                        "pe_markers": state.pe_markers,
                         "ce_symbol": state.ce_sym,
                         "pe_symbol": state.pe_sym,
                         "trend": strategy.get_trend(idx_df),
@@ -348,6 +375,32 @@ async def handle_live_update(websocket, state, update):
     else: target_candle = state.last_pe_candle
 
     if target_candle is None or candle_time > target_candle['time']:
+        # Save finished candle to history before starting new one
+        if target_candle is not None:
+            if is_index: state.idx_history.append(target_candle)
+            elif is_ce: state.ce_history.append(target_candle)
+            elif is_pe: state.pe_history.append(target_candle)
+
+            # Keep only last 100 for strategy
+            if len(state.idx_history) > 100: state.idx_history.pop(0)
+            if len(state.ce_history) > 100: state.ce_history.pop(0)
+            if len(state.pe_history) > 100: state.pe_history.pop(0)
+
+            # Check for strategy setup on closed candle
+            if is_ce or is_pe:
+                if len(state.idx_history) > 20:
+                    idx_df = pd.DataFrame(state.idx_history)
+                    trend = strategy.get_trend(idx_df)
+                    opt_df = pd.DataFrame(state.ce_history if is_ce else state.pe_history)
+                    setup = strategy.check_setup(opt_df, trend)
+                    if setup:
+                        marker = {"time": target_candle['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"}
+                        if is_ce: state.ce_markers.append(marker)
+                        else: state.pe_markers.append(marker)
+                        await websocket.send_json(clean_json({
+                            "type": "marker_update", "is_ce": is_ce, "is_pe": is_pe, "marker": marker, "signal": setup
+                        }))
+
         new_candle = {
             "time": candle_time,
             "open": update['price'],
