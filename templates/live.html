@@ -14,11 +14,8 @@
                 <option value="BANKNIFTY">BANKNIFTY</option>
                 <option value="NIFTY">NIFTY</option>
             </select>
-            <button onclick="fetchLive()">Go Live</button>
-            <button onclick="startReplay()">Start Replay</button>
-            <button onclick="pauseReplay()">Pause</button>
-            <button onclick="stepReplay()">Step</button>
-            <input type="range" id="replay-slider" min="50" max="300" value="50" style="width: 150px; margin-left: 10px;" oninput="onSliderChange(this.value)">
+            <button onclick="fetchLive()" class="btn-live">Go Live</button>
+            <a href="/replay" class="btn-nav">Switch to Replay</a>
         </div>
         <div id="status" class="status">System Ready</div>
     </div>

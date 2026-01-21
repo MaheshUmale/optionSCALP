@@ -47,8 +47,11 @@ class TradingViewLiveFeed:
 
     def connect(self):
         trading_view_socket = "wss://data.tradingview.com/socket.io/websocket"
-        headers = json.dumps({"Origin": "https://data.tradingview.com"})
-        self.ws = create_connection(trading_view_socket, headers=headers)
+        headers = {
+            "Origin": "https://data.tradingview.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        self.ws = create_connection(trading_view_socket, header=headers)
 
         self.send_message("quote_create_session", [self.session])
         self.send_message(
@@ -120,13 +123,15 @@ class TradingViewLiveFeed:
                             self.send_ping_packet(result)
             except Exception as e:
                 if self.is_running:
-                    logger.error(f"LiveFeed Error: {e}")
+                    logger.error(f"LiveFeed Error: {e}. Reconnecting in 5s...")
                     # Attempt reconnect
+                    import time
+                    time.sleep(5)
                     try:
                         self.connect()
                         for sym in self.symbols:
                             self.send_message("quote_add_symbols", [self.session, sym])
-                    except:
-                        pass
+                    except Exception as re_e:
+                        logger.error(f"Reconnect failed: {re_e}")
                 else:
                     break
