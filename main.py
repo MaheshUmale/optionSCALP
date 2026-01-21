@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.websockets import WebSocketState
+import pandas as pd
 import uvicorn
 import json
 import asyncio
@@ -111,8 +112,22 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Symbols in TV are like NSE:NIFTY
                     tv_index = f"NSE:{index_sym}"
                     tv_option = f"NSE:{opt_sym}"
+
+                    # Subscribe to ATM/OTM/ITM for both CE and PE to have data ready
+                    symbols_to_subscribe = [tv_index, tv_option]
+
+                    # Calculate a range of strikes to subscribe
+                    step = 100 if "BANK" in index_sym else 50
+                    current_strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=step)
+
+                    for offset in [-200, -100, 0, 100, 200]:
+                        strike = current_strike + offset
+                        for opt_type in ["C", "P"]:
+                            sym = dm.get_option_symbol(index_sym, strike, opt_type)
+                            symbols_to_subscribe.append(f"NSE:{sym}")
+
                     state.live_feed.start()
-                    state.live_feed.add_symbols([tv_index, tv_option])
+                    state.live_feed.add_symbols(list(set(symbols_to_subscribe)))
 
                 elif data['type'] == 'start_replay':
                     logger.info(f"Starting replay for {data['index']}")
@@ -254,7 +269,16 @@ async def handle_live_update(websocket, state, update):
     if websocket.client_state != WebSocketState.CONNECTED: return
 
     # update: {"symbol": "...", "price": ..., "volume": ..., "timestamp": ...}
-    is_index = state.index_sym in update['symbol']
+    # Symbols from TV are like NSE:NIFTY or NSE:BANKNIFTY260127C59000
+    # state.index_sym is like "BANKNIFTY"
+    # state.opt_sym is like "BANKNIFTY260127C59000"
+
+    clean_symbol = update['symbol'].replace("NSE:", "")
+    is_index = clean_symbol == state.index_sym
+    is_option = clean_symbol == state.opt_sym
+
+    if not is_index and not is_option:
+        return # Ignore updates for other symbols (OTM/ITM not yet used in chart)
 
     # In a real app, we'd aggregate ticks into candles.
     # For now, let's just update the last candle or create a new one if time has passed.
