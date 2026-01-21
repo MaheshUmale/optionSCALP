@@ -23,26 +23,26 @@
     <div class="main-container">
         <div class="chart-section">
             <div class="chart-container">
-                <div class="chart-label">INDEX</div>
+                <div class="chart-label"><span>INDEX</span></div>
                 <div id="index-chart" class="chart-box"></div>
             </div>
             <div class="chart-container">
-                <div class="chart-label" id="ce-label">CE OPTION</div>
+                <div class="chart-label" id="ce-label"><span>CE OPTION</span></div>
                 <div id="ce-chart" class="chart-box"></div>
             </div>
             <div class="chart-container">
-                <div class="chart-label" id="pe-label">PE OPTION</div>
+                <div class="chart-label" id="pe-label"><span>PE OPTION</span></div>
                 <div id="pe-chart" class="chart-box"></div>
             </div>
         </div>
+    </div>
 
-        <div class="side-panel">
-            <div class="panel-header">SIGNALS</div>
-            <div id="signals-list" class="signals-view"></div>
-
-            <div class="panel-header">TRADE INFO</div>
-            <div id="trade-info" class="trade-info"></div>
+    <div class="signal-overlay" id="signal-overlay">
+        <div class="overlay-header">
+            SIGNAL LOG
+            <span style="cursor: pointer;" onclick="document.getElementById('signals-list').style.display = document.getElementById('signals-list').style.display === 'none' ? 'block' : 'none'">[toggle]</span>
         </div>
+        <div id="signals-list" class="signals-view"></div>
     </div>
 
     <script src="/static/script.js"></script>
