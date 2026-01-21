@@ -116,15 +116,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.last_pe_candle = pe_recs[-1]
 
                     # Pre-calculate historical signals for the chart
-
-                    for i in range(20, len(ce_df)):
+                    # Step every 5 bars to speed up initial load, or just check last 300 bars
+                    start_bar = max(20, len(ce_df) - 300)
+                    for i in range(start_bar, len(ce_df)):
                         last_time = ce_df.index[i]
-                        sub_idx = idx_df[idx_df.index <= last_time]
-                        if len(sub_idx) < 10: continue
+                        # Use a sliding window for trend calculation to speed up indexing
+                        sub_idx = idx_df.iloc[max(0, i-50):i+1]
+                        if len(sub_idx) < 20: continue
 
                         trend = strategy.get_trend(sub_idx)
-                        ce_setup = strategy.check_setup(ce_df.iloc[:i+1], trend)
-                        pe_setup = strategy.check_setup(pe_df.iloc[:i+1], trend)
+                        ce_setup = strategy.check_setup(ce_df.iloc[max(0, i-50):i+1], trend)
+                        pe_setup = strategy.check_setup(pe_df.iloc[max(0, i-50):i+1], trend)
 
                         if ce_setup:
                             state.ce_markers.append({"time": ce_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "BUY"})
@@ -222,9 +224,10 @@ async def websocket_endpoint(websocket: WebSocket):
 def format_records(df):
     """Formats DataFrame for UI with Unix timestamps shifted to IST for presentation."""
     recs = df.copy().reset_index()
-    # If the index is naive, assume it is UTC as tvDatafeed typically returns UTC for historical data
+    # If the index is naive, it is IST as returned by tvDatafeed for NSE.
+    # Localize to IST and convert to UTC for correct Unix timestamp.
     if recs['datetime'].dt.tz is None:
-        recs['datetime'] = recs['datetime'].dt.tz_localize('UTC')
+        recs['datetime'] = recs['datetime'].dt.tz_localize('Asia/Kolkata').dt.tz_convert('UTC')
 
     # Add Unix timestamp in seconds.
     # Shift by 5.5 hours (19800s) to force UI to show IST even if browser is in UTC.

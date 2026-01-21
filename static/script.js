@@ -39,25 +39,31 @@ function initCharts() {
 
     // Synchronize crosshairs and time scales
     const charts = [idxChart, ceChart, peChart];
+    let isSyncing = false;
 
     charts.forEach((chart, index) => {
         const others = charts.filter((_, i) => i !== index);
 
         // Sync Crosshair
         chart.subscribeCrosshairMove(param => {
+            if (isSyncing) return;
+            isSyncing = true;
             if (param.time) {
                 others.forEach(c => c.setCrosshairPosition(undefined, param.time, undefined));
             } else {
                 others.forEach(c => c.clearCrosshairPosition());
             }
+            isSyncing = false;
         });
 
         // Sync Time Scale
         chart.timeScale().subscribeVisibleTimeRangeChange(range => {
-            if (!range) return;
+            if (!range || isSyncing) return;
+            isSyncing = true;
             others.forEach(c => {
                 c.timeScale().setVisibleRange(range);
             });
+            isSyncing = false;
         });
     });
 
