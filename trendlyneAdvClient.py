@@ -24,6 +24,7 @@ class TrendlyneScalper:
         try:
             resp = await self.client.get(url)
             # We map this to match parsing logic key "expiresDts"
+            # We map this to match your saved parsing logic key "expiresDts"
             return {"expiresDts": resp.json().get('body', {}).get('expiryDates', [])}
         except Exception:
             return {"expiresDts": []}
