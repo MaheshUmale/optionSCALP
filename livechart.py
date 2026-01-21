@@ -49,7 +49,7 @@ selected_expiry = st.sidebar.selectbox("Expiry (YYMMDD)", valid_expiries)
 strike = st.sidebar.number_input("Strike Price", value=24500 if index_ref == "NIFTY" else 52000, step=50 if index_ref == "NIFTY" else 100)
 opt_type = st.sidebar.radio("Option Type", ["C", "P"])
 
-# SYMBOL CONSTRUCTION: e.g., NIFTY26012724500CE
+# SYMBOL CONSTRUCTION: e.g., NIFTY260127C24500 FOR  TRADINGVIEW ( NSE:(INDEX)(YYMMDD)(C/P)(STRIKE) = index + expiry + type + strike )
 option_symbol = f"{index_ref}{selected_expiry}{opt_type}{int(strike)}"
 
 # --- DASHBOARD LAYOUT ---
