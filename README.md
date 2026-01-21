@@ -1,13 +1,14 @@
 # OptionScalp Pro - Ultra Quant Trading System
 
-A professional web-based quantitative trading system for Nifty and Bank Nifty options scalping, featuring TradingView Lightweight Charts and a granular Order Flow Footprint visualization.
+A professional web-based quantitative trading system for Nifty and Bank Nifty options scalping, featuring TradingView Lightweight Charts and a specialized Delta Volume Strategy for identifying high-probability buying opportunities.
 
 ## Features
-- **TradingView Charts:** High-performance, interactive candlestick charts using the `lightweight-charts` library.
-- **Order Flow Footprint:** Professional "Split-Cell" layout (Sellers on Left, Buyers on Right) with heatmap intensity and imbalance highlighting.
-- **Real-time & Replay:** WebSocket-based live monitoring and full historical replay controls (Play, Pause, Step).
-- **Automated Symbol Mapping:** Calculates nearest NSE expiry (Tuesday/Jan 2026 dates) and maps Index trends to ATM Call/Put options.
-- **FastAPI Backend:** Robust Python backend for data gathering (via `tvDatafeed`) and scalping strategy execution.
+- **TradingView Charts:** High-performance, interactive candlestick charts using the `lightweight-charts` library (v4.2.3).
+- **Delta Volume Strategy:** Advanced order-flow logic that identifies "Short Covering" (Sellers Exiting) by analyzing Net Delta Volume, Open Interest (OI) changes, and price momentum from Trendlyne 5-minute buildup data.
+- **Real-time & Replay:** Dual-mode interface. Live mode provides real-time data streaming via WebSockets, while Replay mode allows for candle-by-candle historical playback.
+- **Automated Symbol Mapping:** Calculates nearest NSE expiry and dynamically maps Index trends to the most relevant ATM/OTM Call and Put options.
+- **Trendlyne Integration:** Asynchronous data retrieval from Trendlyne for 5-minute buildup clusters (ATM, ITM, and OTM strikes) to detect professional order flow behavior.
+- **FastAPI Backend:** High-concurrency Python backend using FastAPI, WebSockets, and `httpx` for non-blocking data acquisition.
 
 ## Installation
 
@@ -46,15 +47,16 @@ python main.py
 After running, open your browser and navigate to: **`http://localhost:8000`**
 
 ## Usage Guide
-- **Go Live:** Connects to TradingView and fetches real-time Index and ATM Option data based on the current trend.
-- **Replay Control:** Switch to the "Replay Control" tab to visualize historical data candle-by-candle. This is perfect for verifying setups.
-- **Order Flow:** The side panel provides a real-time Footprint view of the last candle, showing volume distribution and aggressive imbalances.
-- **Signals:** Strategy 1 (Pullback) signals are automatically plotted as markers on the chart and listed in the signal panel.
+- **Go Live:** Connects to TradingView and fetches real-time Index and ATM Option data. The system automatically refreshes Trendlyne Delta signals at the start of every new candle.
+- **Replay Mode:** Accessible via `/replay`. Allows users to load historical data and step through it to verify strategy signals and visualize market pivots.
+- **Delta Volume Signals:** The system identifies bullish/bearish opportunities when sellers are "trapped" (Price rising/falling + Falling OI + Volume Spike). These are displayed in the real-time signal list.
+- **Visual Markers:** Entry setups and strategy signals are plotted directly on the charts as "BUY" markers for quick execution reference.
 
-## Backtest Result: Jan 20, 2026
-- **Symbol:** BANKNIFTY260120P59400 (Bearish Index Trend)
-- **Setup:** Valid Small Bearish Pullback Candle detected.
-- **Signal:** BUY Above **295.95** | SL: **255.90** | Target: **325.95+**
+## Backtest Result: Jan 21, 2026
+- **Symbol:** BANKNIFTY (Bullish Signal)
+- **Setup:** Delta Volume Short Covering detected on Call Strikes.
+- **Signal:** Net Delta Positive | Call OI Decreasing | Price Momentum Up.
+- **Result:** High-probability momentum breakout confirmed in Replay.
 
 ## Project Structure
 - `main.py`: FastAPI server and WebSocket manager.
