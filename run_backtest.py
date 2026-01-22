@@ -88,7 +88,7 @@ async def run_automated_backtest(index_sym="BANKNIFTY", date_str="2026-01-21"):
 
     print(report)
     filename = f"backtest_report_{index_sym}.md"
-    with open(filename, "w") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
     return report
 
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     async def run_all():
         b_report = await run_automated_backtest("BANKNIFTY", "2026-01-21")
         n_report = await run_automated_backtest("NIFTY", "2026-01-21")
-        with open("backtest_report.md", "w") as f:
+        with open("backtest_report.md", "w", encoding="utf-8")as f:
             f.write("# FULL BACKTEST REPORT\n" + b_report + "\n---\n" + n_report)
 
     asyncio.run(run_all())
