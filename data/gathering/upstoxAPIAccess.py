@@ -96,7 +96,7 @@ class UpstoxClient:
         except Exception as e:
             print(f"[UpstoxClient] API Error in get_ltp: {e}")
             return None
-def get_upstox_instruments(symbols, current_spots):
+ 
     """
     Fetches Upstox instrument keys for given symbols (e.g. NIFTY, BANKNIFTY)
     and generates option instrument keys for ATM +/- 5 strikes.
