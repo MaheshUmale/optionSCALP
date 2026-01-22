@@ -11,6 +11,9 @@ import io
 import os
 import json
 import re
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 IST_TZ = timezone(timedelta(hours=5, minutes=30))
 
