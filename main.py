@@ -847,6 +847,7 @@ async def handle_live_update(websocket, state, update):
 
             # Check for strategy setup on closed candle (Unified & Segregated)
             if (is_ce or is_pe) and len(state.idx_history) > 20:
+                logger.info(f"Processing strategies on closed candle: {target_candle['time']} for {clean_symbol}")
                 current_utc = datetime.now(timezone.utc)
 
                 # EOD Square-off check for live mode
@@ -858,17 +859,30 @@ async def handle_live_update(websocket, state, update):
                         state.active_trades.remove(trade)
                     return
 
-                idx_df = pd.DataFrame(state.idx_history)
-                ce_df = pd.DataFrame(state.ce_history)
-                pe_df = pd.DataFrame(state.pe_history)
+                # Convert history to DataFrames with proper index for pandas_ta
+                def to_df(hist):
+                    df = pd.DataFrame(hist)
+                    if 'time' in df.columns:
+                        # shifted IST unix timestamp back to naive/UTC for index
+                        df.index = pd.to_datetime(df['time'] - 19800, unit='s')
+                    return df
+
+                idx_df = to_df(state.idx_history)
+                ce_df = to_df(state.ce_history)
+                pe_df = to_df(state.pe_history)
 
                 # A. Option-driven
                 strats_to_check = state.strategies["CE"] if is_ce else state.strategies["PE"]
                 for strat in strats_to_check:
                     is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
                     if not is_index_driven:
-                        setup = strat.check_setup(ce_df if is_ce else pe_df, state.pcr_insights)
-                        if setup: await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
+                        try:
+                            setup = strat.check_setup(ce_df if is_ce else pe_df, state.pcr_insights)
+                            if setup:
+                                logger.info(f"SIGNAL TRIGGERED: {strat.name} on {clean_symbol}")
+                                await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
+                        except Exception as e:
+                            logger.error(f"Error in strategy {strat.name}: {e}")
 
                 # B. Index-driven (on CE close to avoid duplicates)
                 if is_ce:
@@ -928,10 +942,23 @@ async def handle_live_update(websocket, state, update):
                 "trend": state.tf_main.get_trend(pd.DataFrame(state.idx_history), state.pcr_insights) if state.idx_history else None
             }))
     else:
+        # Update current candle from tick
         target_candle['close'] = update['price']
         if update['price'] > target_candle['high']: target_candle['high'] = update['price']
         if update['price'] < target_candle['low']: target_candle['low'] = update['price']
         target_candle['volume'] += volume_delta
+
+        # If Upstox provides its own OHLC for the interval, we can use it for better accuracy
+        if update.get('ohlc'):
+            u_ohlc = update['ohlc']
+            # Map Upstox OHLC to our candle if timestamps match
+            # Upstox ts is in ms
+            u_ts_sec = int(u_ohlc.get('ts', 0)) // 1000
+            if u_ts_sec + 19800 == target_candle['time']:
+                target_candle['open'] = u_ohlc.get('open', target_candle['open'])
+                target_candle['high'] = max(target_candle['high'], u_ohlc.get('high', 0))
+                target_candle['low'] = min(target_candle['low'], u_ohlc.get('low', 999999))
+                target_candle['close'] = u_ohlc.get('close', target_candle['close'])
 
     await websocket.send_json(clean_json({
         "type": "live_update", "symbol": update['symbol'], "candle": target_candle,

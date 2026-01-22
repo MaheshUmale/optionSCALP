@@ -196,6 +196,11 @@ ws.onmessage = (event) => {
         updatePCRInsights(data.pcr_insights);
     }
 
+    if (data.option_chain) {
+        // Option Chain logic could be added here for Greeks/OI visualization
+        console.log("Option Chain Update:", data.option_chain);
+    }
+
     if (data.pnl_stats) {
         updatePnLStats(data.pnl_stats);
     }
