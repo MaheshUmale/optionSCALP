@@ -46,6 +46,7 @@ class UpstoxLiveFeed:
                     market_ff = full_feed.get("marketFF", {})
 
                     ltpc = market_ff.get("ltpc", {})
+                    print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>LTPC:", ltpc)
                     ltp = ltpc.get("ltp")
                     ltt = ltpc.get("ltt")
 
