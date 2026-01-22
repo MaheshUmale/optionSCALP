@@ -110,11 +110,17 @@ def getNiftyAndBNFnOKeys():
             json.dump(data, f, indent=4) # Using indent for pretty printing
 
         # Accessing NIFTY keys
-        # print(f"NIFTY Fut: {data['NIFTY']['future']}")
-        # print(f"Total NIFTY keys to subscribe: {len(data['NIFTY']['all_keys'])}")
+        print(f"NIFTY Fut: {data['NIFTY']['future']}")
+        print(f"Total NIFTY keys to subscribe: {len(data['NIFTY']['all_keys'])}")
+        print(f"BANKNIFTY Fut: {data['BANKNIFTY']['future']}")
+        print(f"Total BANKNIFTY keys to subscribe: {len(data['BANKNIFTY']['all_keys'])}")
         
         ALL_FNO = ALL_FNO+data['NIFTY']['all_keys']+data['BANKNIFTY']['all_keys']
         print(ALL_FNO)
         return ALL_FNO
     except ApiException as e:
         print("Exception when calling MarketQuoteV3Api->get_ltp: %s\n" % e)
+
+
+if __name__ == "__main__":    
+    getNiftyAndBNFnOKeys()
