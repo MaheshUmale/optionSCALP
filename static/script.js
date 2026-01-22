@@ -41,9 +41,25 @@ function initCharts() {
         wickUpColor: '#26a69a', wickDownColor: '#ef5350'
     };
 
-    idxSeries = idxChart.addCandlestickSeries(candleStyle);
-    ceSeries = ceChart.addCandlestickSeries(candleStyle);
-    peSeries = peChart.addCandlestickSeries(candleStyle);
+    idxSeries = idxChart.addCandlestickSeries({
+        ...candleStyle,
+        priceScaleId: 'right'
+    });
+    ceSeries = ceChart.addCandlestickSeries({
+        ...candleStyle,
+        priceScaleId: 'right'
+    });
+    peSeries = peChart.addCandlestickSeries({
+        ...candleStyle,
+        priceScaleId: 'right'
+    });
+
+    [idxChart, ceChart, peChart].forEach(c => {
+        c.priceScale('right').applyOptions({
+            autoScale: true,
+            borderVisible: false,
+        });
+    });
 
     const volStyle = {
         color: '#26a69a',
@@ -140,6 +156,7 @@ ws.onmessage = (event) => {
             idxVolSeries.setData(data.index_data.map(d => ({
                 time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
             })));
+            idxChart.timeScale().fitContent();
         }
 
         if (data.ce_data && ceSeries) {
@@ -153,6 +170,7 @@ ws.onmessage = (event) => {
             if (data.ce_markers) {
                 ceSeries.setMarkers(data.ce_markers);
             }
+            ceChart.timeScale().fitContent();
         }
 
         if (data.pe_data && peSeries) {
@@ -166,6 +184,7 @@ ws.onmessage = (event) => {
             if (data.pe_markers) {
                 peSeries.setMarkers(data.pe_markers);
             }
+            peChart.timeScale().fitContent();
         }
 
         if (data.ce_symbol) {

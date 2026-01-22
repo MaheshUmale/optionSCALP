@@ -40,7 +40,12 @@
 
             series = chart.addCandlestickSeries({
                 upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-                wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+                wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+                priceScaleId: 'right'
+            });
+
+            chart.priceScale('right').applyOptions({
+                autoScale: true,
             });
 
             volSeries = chart.addHistogramSeries({
@@ -64,7 +69,18 @@
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            if (data.type === 'live_update' && data.symbol.includes(symbol)) {
+
+            if (data.type === 'history_data' && (data.symbol === symbol || symbol.includes(data.symbol))) {
+                series.setData(data.data.map(d => ({
+                    time: d.time, open: d.open, high: d.high, low: d.low, close: d.close
+                })));
+                volSeries.setData(data.data.map(d => ({
+                    time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
+                })));
+                chart.timeScale().fitContent();
+            }
+
+            if (data.type === 'live_update' && (data.symbol === symbol || symbol.includes(data.symbol))) {
                 series.update(data.candle);
                 volSeries.update({
                     time: data.candle.time,
@@ -88,6 +104,7 @@
                     volSeries.setData(relevantData.map(d => ({
                         time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
                     })));
+                    chart.timeScale().fitContent();
                 }
             }
         };

@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI):
     if use_upstox:
         logger.info("Pre-starting Upstox feed at startup")
         feed_manager.get_upstox_feed(config.ACCESS_TOKEN)
+        dm.set_upstox_client(UpstoxClient(config.ACCESS_TOKEN))
     else:
         logger.info("Pre-starting TradingView feed at startup")
         feed_manager.get_tv_feed()
@@ -164,10 +165,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
                     state.pe_sym = dm.get_option_symbol(index_sym, strike, "P")
 
-                    ce_df = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
-                    pe_df = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    ce_df = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=300)
+                    pe_df = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=300)
                     if not ce_df.empty: ce_df = ce_df.between_time('03:45', '10:00')
                     if not pe_df.empty: pe_df = pe_df.between_time('03:45', '10:00')
+
+                    logger.info(f"Fetched history for {index_sym}: {len(idx_df)} bars. CE: {len(ce_df)} bars. PE: {len(pe_df)} bars.")
 
                     # Seed history for live strategy calculation
                     idx_recs = format_records(idx_df)
@@ -231,7 +234,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if use_upstox:
                         logger.info("Using Upstox for Live Feed")
                         live_feed = feed_manager.get_upstox_feed(config.ACCESS_TOKEN)
-                        state.upstox_client = UpstoxClient(config.ACCESS_TOKEN)
+                        state.upstox_client = dm.upstox_client
                         
                         # Use Upstox specific mapping
                         spot_prices = {index_sym: idx_df['close'].iloc[-1]}
@@ -366,15 +369,24 @@ async def websocket_endpoint(websocket: WebSocket):
                     use_upstox = hasattr(config, 'ACCESS_TOKEN') and config.ACCESS_TOKEN != "YOUR_ACCESS_TOKEN"
                     if use_upstox:
                         live_feed = feed_manager.get_upstox_feed(config.ACCESS_TOKEN)
-                        # We might need the key if it's not already known, but for simplicity:
-                        if "|" in sub_sym: # Likely already a key
-                             live_feed.add_symbols([{"symbol": sub_sym, "key": sub_sym}])
+                        inst_key = dm.get_upstox_key_for_tv_symbol(sub_sym)
+                        if inst_key:
+                             live_feed.add_symbols([{"symbol": sub_sym, "key": inst_key}])
                         else:
-                             # Try to guess or just add as is
                              live_feed.add_symbols([{"symbol": sub_sym, "key": sub_sym}])
                     else:
                         live_feed = feed_manager.get_tv_feed()
                         live_feed.add_symbols([sub_sym])
+
+                    # Fetch and send history for popout
+                    hist_df = dm.get_data(sub_sym, interval=Interval.in_1_minute, n_bars=300)
+                    if not hist_df.empty:
+                        hist_df = hist_df.between_time('03:45', '10:00')
+                        await websocket.send_json(clean_json({
+                            "type": "history_data",
+                            "symbol": sub_sym,
+                            "data": format_records(hist_df)
+                        }))
 
         except Exception as e:
             logger.exception("Listen Error")
@@ -860,7 +872,12 @@ async def handle_live_update(websocket, state, update):
             volume_delta = 0
         state.last_total_volumes[symbol] = current_total_volume
 
-    now = int(datetime.now(timezone.utc).timestamp())
+    # Use feed timestamp or fallback to current time
+    now_ts = update.get('timestamp')
+    if now_ts is None:
+        now_ts = datetime.now(timezone.utc).timestamp()
+
+    now = int(now_ts)
     interval_sec = 60
     # Apply 5.5h shift for IST presentation (Force IST digits as UTC)
     candle_time = ((now + 19800) // interval_sec) * interval_sec
