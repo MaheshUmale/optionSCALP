@@ -926,8 +926,12 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time,
                     target_df = pe_df if is_pe_trade else ce_df
                     target_sym = state.pe_sym if is_pe_trade else state.ce_sym
 
-                    if target_df.empty: continue
-                    if not check_option_ema_filter(target_df): continue
+                    if target_df.empty:
+                        logger.info(f"Skipping {strat.name}: No data for {target_sym}")
+                        continue
+                    if not check_option_ema_filter(target_df):
+                        logger.info(f"Skipping {strat.name}: EMA Filter failed for {target_sym}")
+                        continue
 
                     setup['strat_name'] = strat.name
                     setup['time'] = candle_time
@@ -937,6 +941,7 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time,
                     setup['is_pe'] = is_pe_trade
 
                     if handle_new_trade(state, strat.name, target_sym, setup, candle_time, store=record_trades, store_db=store_db):
+                        logger.info(f"SIGNAL FIRED: {strat.name} on {target_sym} at {setup['entry_price']}")
                         new_signals.append(setup)
 
     # B. Option-driven strategies
@@ -951,7 +956,9 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time,
             if not strat.is_index_driven and not any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
                 setup = strat.check_setup(df, state.pcr_insights)
                 if setup:
-                    if not check_option_ema_filter(df): continue
+                    if not check_option_ema_filter(df):
+                        logger.info(f"Skipping {strat.name}: EMA Filter failed for {sym}")
+                        continue
 
                     setup['strat_name'] = strat.name
                     setup['time'] = candle_time
@@ -961,6 +968,7 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time,
                     setup['is_pe'] = (side == "PE")
 
                     if handle_new_trade(state, strat.name, sym, setup, candle_time, store=record_trades, store_db=store_db):
+                        logger.info(f"SIGNAL FIRED: {strat.name} on {sym} at {setup['entry_price']}")
                         new_signals.append(setup)
 
         # Check Trend Following

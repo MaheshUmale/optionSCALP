@@ -72,6 +72,7 @@ function initCharts() {
             autoScale: true,
             borderVisible: false,
             scaleMargins: { top: 0.1, bottom: 0.2 },
+            minimumWidth: 100,
         });
     });
 
@@ -112,9 +113,7 @@ function initCharts() {
             others.forEach(c => {
                 try {
                     c.timeScale().setVisibleRange(range);
-                } catch (e) {
-                    // Ignore errors during initialization when some charts might not have data yet
-                }
+                } catch (e) { }
             });
             isSyncing = false;
         });
@@ -289,19 +288,28 @@ ws.onmessage = (event) => {
 
 function updateSignal(sig) {
     const list = document.getElementById('signals-list');
+
+    // Prevent duplicates in the UI
+    const timeStr = sig.time ? new Date((sig.time - 19800) * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
+    const sigId = `${sig.strat_name}-${sig.time}-${sig.entry_price}`;
+    if (document.getElementById(sigId)) return;
+
     const div = document.createElement('div');
+    div.id = sigId;
     div.className = 'signal-item';
     const strat = sig.strat_name || "STRATEGY";
     const side = (sig.type && sig.type.includes("PE")) ? "PE" : "CE";
     const color = side === "CE" ? "#26a69a" : "#ef5350";
 
-    // For replay mode, sig.time is the shifted IST unix timestamp.
-    const timeStr = sig.time ? new Date((sig.time - 19800) * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
-
     div.style.borderLeft = `4px solid ${color}`;
     div.title = sig.reason || ""; // Tooltip
     div.innerHTML = `[${timeStr}] <b>${strat}</b> (${side}) @ ${sig.entry_price.toFixed(2)} (SL: ${sig.sl ? sig.sl.toFixed(2) : 'N/A'})<br><small style="color: #888;">${sig.reason || ''}</small>`;
     list.prepend(div);
+
+    // Limit log entries to 50
+    if (list.children.length > 50) {
+        list.removeChild(list.lastChild);
+    }
 }
 
 function renderStrategyReport(report) {
