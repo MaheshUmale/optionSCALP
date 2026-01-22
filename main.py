@@ -183,9 +183,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     ce_recs = format_records(ce_df)
                     pe_recs = format_records(pe_df)
 
-                    state.idx_history = idx_recs[-100:] if idx_recs else []
-                    state.ce_history = ce_recs[-100:] if ce_recs else []
-                    state.pe_history = pe_recs[-100:] if pe_recs else []
+                    state.idx_history = idx_recs[-500:] if idx_recs else []
+                    state.ce_history = ce_recs[-500:] if ce_recs else []
+                    state.pe_history = pe_recs[-500:] if pe_recs else []
 
                     state.ce_markers = []
                     state.pe_markers = []
@@ -194,23 +194,28 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.last_ce_candle = ce_recs[-1] if ce_recs else None
                     state.last_pe_candle = pe_recs[-1] if pe_recs else None
 
-                    # Pre-calculate historical signals for the chart
-                    # Step every 5 bars to speed up initial load, or just check last 300 bars
+                    # Pre-calculate historical signals AND warm up strategy internal states
+                    # Use last 300 bars for consistent state initialization
                     start_bar = max(20, len(ce_df) - 300)
                     for i in range(start_bar, len(ce_df)):
                         last_time = ce_df.index[i]
-                        # Use a sliding window for trend calculation to speed up indexing
-                        sub_idx = idx_df.iloc[max(0, i-50):i+1]
-                        if len(sub_idx) < 20: continue
+                        sub_idx = idx_df.iloc[:i+1]
+                        sub_ce = ce_df.iloc[:i+1]
+                        sub_pe = pe_df.iloc[:i+1]
 
-                        trend = state.tf_main.get_trend(sub_idx)
-                        ce_setup = state.tf_strategies["CE"].check_setup_unified(sub_idx, ce_df.iloc[max(0, i-50):i+1], state.pcr_insights, "CE")
-                        pe_setup = state.tf_strategies["PE"].check_setup_unified(sub_idx, pe_df.iloc[max(0, i-50):i+1], state.pcr_insights, "PE")
+                        # Use shifted timestamp for markers
+                        c_time = ce_recs[i]['time']
 
-                        if ce_setup:
-                            state.ce_markers.append({"time": ce_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "CE BUY"})
-                        if pe_setup:
-                            state.pe_markers.append({"time": pe_recs[i]['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": "PE BUY"})
+                        # Run unified strategy processor
+                        h_signals = evaluate_all_strategies(state, sub_idx, sub_ce, sub_pe, last_time, c_time)
+
+                        for sig in h_signals:
+                            color = "#2196F3" if sig['strat_name'] == "TREND_FOLLOWING" else "#FF9800"
+                            marker = {"time": sig['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": sig['strat_name']}
+                            if sig.get('is_pe'):
+                                state.pe_markers.append(marker)
+                            else:
+                                state.ce_markers.append(marker)
 
                     # Fetch Delta Volume signals and PCR Insights from Trendlyne
                     delta_signals = await fetch_trendlyne_signals(index_sym, strike)
@@ -520,7 +525,7 @@ def is_within_trading_window(ts_utc):
 
 def is_market_closing(ts_utc):
     """
-    Check if IST time is 15:20 or later.
+    Check if IST time is 15:25 or later (Matching is_within_trading_window end).
     """
     if isinstance(ts_utc, (int, float)):
         dt = datetime.fromtimestamp(ts_utc, tz=timezone.utc)
@@ -531,7 +536,7 @@ def is_market_closing(ts_utc):
     h, m = ist_dt.hour, ist_dt.minute
     current_time = h * 60 + m
 
-    close_time = 15 * 60 + 20
+    close_time = 15 * 60 + 25
     return current_time >= close_time
 
 def check_option_ema_filter(option_df):
@@ -569,8 +574,10 @@ def check_option_ema_filter(option_df):
 
 def format_records(df):
     """Formats DataFrame for UI with Unix timestamps shifted to IST for presentation."""
+    if df.empty: return []
     recs = df.copy().reset_index()
     # Data is already localized to UTC in DataManager.get_data
+    if 'datetime' not in recs.columns: return []
     if recs['datetime'] is None or recs['datetime'].dt.tz is None:
         recs['datetime'] = recs['datetime'].dt.tz_localize('Asia/Kolkata').dt.tz_convert('UTC')
 
@@ -682,95 +689,18 @@ async def send_replay_step(websocket, state):
         pe_recs = format_records(sub_pe)
         idx_recs = format_records(sub_idx)
 
-        # 6. Process All Strategies (Unified & Segregated)
+        # 6. Process All Strategies (Unified & Synchronized)
         trend = state.tf_main.get_trend(sub_idx, state.pcr_insights)
-        new_signals = []
-        sl_dist = 30 if "BANK" in state.index_sym else 20
+        candle_time = ce_recs[-1]['time']
+        new_signals = evaluate_all_strategies(state, sub_idx, sub_ce, sub_pe, last_time, candle_time)
 
-        # A. Index-driven strategies
-        for strat in state.strategies["INDEX"]:
-            if strat.is_index_driven or any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
-                setup = strat.check_setup(sub_idx, state.pcr_insights)
-                if setup:
-                    s_type = setup.get('type', '').upper()
-                    is_pe_trade = ("SHORT" in s_type) or ("PE" in s_type)
-                    target_df = sub_pe if is_pe_trade else sub_ce
-                    target_sym = state.pe_sym if is_pe_trade else state.ce_sym
-                    target_markers = state.pe_markers if is_pe_trade else state.ce_markers
-                    target_recs = pe_recs if is_pe_trade else ce_recs
-
-                    setup['strat_name'] = strat.name
-                    setup['time'] = target_recs[-1]['time']
-                    setup['entry_price'] = setup.get('entry_price') or target_df['close'].iloc[-1]
-                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
-                    setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
-
-                    if not is_within_trading_window(last_time):
-                        continue
-
-                    if not check_option_ema_filter(target_df):
-                        continue
-
-                    if handle_new_trade(state, strat.name, target_sym, setup, setup['time']):
-                        new_signals.append(setup)
-                        target_markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
-
-        # B. Option-driven strategies
-        for side, sym, df, markers, strat_list, recs in [
-            ("CE", state.ce_sym, sub_ce, state.ce_markers, state.strategies["CE"], ce_recs),
-            ("PE", state.pe_sym, sub_pe, state.pe_markers, state.strategies["PE"], pe_recs)
-        ]:
-            for strat in strat_list:
-                if not strat.is_index_driven and not any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
-                    setup = strat.check_setup(df, state.pcr_insights)
-                    if setup:
-                        s_type = setup.get('type', '').upper()
-                        is_pe_trade = ("SHORT" in s_type) or ("PE" in s_type)
-                        # Routing: SHORT signal on ANY chart -> Buy PE. LONG signal on ANY chart -> Buy CE.
-                        # EXCEPT: If we are on PE chart, LONG means Bullish on PE (Market Bearish) -> Buy PE.
-                        # Actually, simplified: LONG = CE, SHORT = PE (matches user instruction)
-                        target_sym = state.pe_sym if is_pe_trade else state.ce_sym
-                        target_markers = state.pe_markers if is_pe_trade else state.ce_markers
-                        target_df = sub_pe if is_pe_trade else sub_ce
-                        target_recs = pe_recs if is_pe_trade else ce_recs
-
-                        setup['strat_name'] = strat.name
-                        setup['time'] = target_recs[-1]['time']
-                        setup['entry_price'] = setup.get('entry_price') or target_df['close'].iloc[-1]
-                        setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
-                        setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
-
-                        if not is_within_trading_window(last_time):
-                            continue
-
-                        if not check_option_ema_filter(target_df):
-                            continue
-
-                        if handle_new_trade(state, strat.name, target_sym, setup, setup['time']):
-                            new_signals.append(setup)
-                            target_markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
-
-        # C. Trend Following
-        for side, sym, df, markers, recs in [("CE", state.ce_sym, sub_ce, state.ce_markers, ce_recs), ("PE", state.pe_sym, sub_pe, state.pe_markers, pe_recs)]:
-            tf_strat = state.tf_strategies[side]
-            setup = tf_strat.check_setup_unified(sub_idx, df, state.pcr_insights, side)
-            if setup:
-                # TF is already side-aware, so we use its directed symbol
-                setup['strat_name'] = tf_strat.name
-                setup['time'] = recs[-1]['time']
-                setup['entry_price'] = df['close'].iloc[-1]
-                setup['sl'] = setup['entry_price'] - sl_dist
-                setup['target'] = setup['entry_price'] + sl_dist * 2
-
-                if not is_within_trading_window(last_time):
-                    continue
-
-                if not check_option_ema_filter(df):
-                    continue
-
-                if handle_new_trade(state, tf_strat.name, sym, setup, setup['time']):
-                    new_signals.append(setup)
-                    markers.append({"time": setup['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": tf_strat.name})
+        for sig in new_signals:
+            color = "#2196F3" if sig['strat_name'] == "TREND_FOLLOWING" else "#FF9800"
+            marker = {"time": sig['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": sig['strat_name']}
+            if sig.get('is_pe'):
+                state.pe_markers.append(marker)
+            else:
+                state.ce_markers.append(marker)
 
         # 7. Construct Message
         msg = {
@@ -909,41 +839,81 @@ async def fetch_trendlyne_signals(index_sym, atm_strike):
         logger.error(f"Error fetching Trendlyne signals: {e}")
         return None
 
-async def handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle):
+def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time):
+    """
+    Unified strategy processor for both Live and Replay.
+    Returns a list of signals triggered.
+    """
+    new_signals = []
     sl_dist = 30 if "BANK" in state.index_sym else 20
 
-    s_type = setup.get('type', '').upper()
-    is_pe_t = ("SHORT" in s_type) or ("PE" in s_type)
-    symbol = state.pe_sym if is_pe_t else state.ce_sym
+    if not is_within_trading_window(last_time):
+        return new_signals
 
-    # Use correct instrument price for entry if not provided
-    if setup.get('entry_price'):
-        entry = setup['entry_price']
-    else:
-        if is_pe_t: entry = state.last_pe_candle['close'] if state.last_pe_candle else target_candle['close']
-        else: entry = state.last_ce_candle['close'] if state.last_ce_candle else target_candle['close']
+    # A. Index-driven strategies
+    if not idx_df.empty and len(idx_df) >= 20:
+        for strat in state.strategies["INDEX"]:
+            if strat.is_index_driven or any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
+                setup = strat.check_setup(idx_df, state.pcr_insights)
+                if setup:
+                    s_type = setup.get('type', '').upper()
+                    is_pe_trade = ("SHORT" in s_type) or ("PE" in s_type)
+                    target_df = pe_df if is_pe_trade else ce_df
+                    target_sym = state.pe_sym if is_pe_trade else state.ce_sym
 
-    setup['strat_name'] = strat.name
-    setup['time'] = target_candle['time']
-    setup['entry_price'] = entry
-    setup['sl'] = setup.get('sl') or (entry - sl_dist)
-    setup['target'] = setup.get('target') or (entry + sl_dist * 2)
+                    if target_df.empty: continue
+                    if not check_option_ema_filter(target_df): continue
 
-    if handle_new_trade(state, strat.name, symbol, setup, target_candle['time']):
-        color = "#2196F3" if strat.name == "TREND_FOLLOWING" else "#FF9800"
-        marker = {"time": target_candle['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": strat.name}
-        if not is_pe_t:
-            state.ce_markers.append(marker)
-        else:
-            state.pe_markers.append(marker)
+                    setup['strat_name'] = strat.name
+                    setup['time'] = candle_time
+                    setup['entry_price'] = setup.get('entry_price') or target_df['close'].iloc[-1]
+                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
+                    setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
+                    setup['is_pe'] = is_pe_trade
 
-        await websocket.send_json(clean_json({
-            "type": "marker_update", "is_ce": not is_pe_t,
-            "is_pe": is_pe_t,
-            "symbol": symbol,
-            "marker": marker, "signal": setup,
-            "pnl_stats": state.pnl_tracker.get_stats()
-        }))
+                    if handle_new_trade(state, strat.name, target_sym, setup, candle_time):
+                        new_signals.append(setup)
+
+    # B. Option-driven strategies
+    for side, df, strat_list, sym in [
+        ("CE", ce_df, state.strategies["CE"], state.ce_sym),
+        ("PE", pe_df, state.strategies["PE"], state.pe_sym)
+    ]:
+        if df.empty or len(df) < 20: continue
+
+        # Check standard option strats
+        for strat in strat_list:
+            if not strat.is_index_driven and not any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
+                setup = strat.check_setup(df, state.pcr_insights)
+                if setup:
+                    if not check_option_ema_filter(df): continue
+
+                    setup['strat_name'] = strat.name
+                    setup['time'] = candle_time
+                    setup['entry_price'] = setup.get('entry_price') or df['close'].iloc[-1]
+                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
+                    setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
+                    setup['is_pe'] = (side == "PE")
+
+                    if handle_new_trade(state, strat.name, sym, setup, candle_time):
+                        new_signals.append(setup)
+
+        # Check Trend Following
+        tf_strat = state.tf_strategies[side]
+        tf_setup = tf_strat.check_setup_unified(idx_df, df, state.pcr_insights, side)
+        if tf_setup:
+            if check_option_ema_filter(df):
+                tf_setup['strat_name'] = tf_strat.name
+                tf_setup['time'] = candle_time
+                tf_setup['entry_price'] = tf_setup.get('entry_price') or df['close'].iloc[-1]
+                tf_setup['sl'] = tf_setup.get('sl') or (tf_setup['entry_price'] - sl_dist)
+                tf_setup['target'] = tf_setup.get('target') or (tf_setup['entry_price'] + sl_dist * 2)
+                tf_setup['is_pe'] = (side == "PE")
+
+                if handle_new_trade(state, tf_strat.name, sym, tf_setup, candle_time):
+                    new_signals.append(tf_setup)
+
+    return new_signals
 
 async def handle_live_update(websocket, state, update):
     if websocket.client_state != WebSocketState.CONNECTED: return
@@ -1027,13 +997,13 @@ async def handle_live_update(websocket, state, update):
 
             if is_index:
                 state.idx_history.append(target_candle)
-                if len(state.idx_history) > 100: state.idx_history.pop(0)
+                if len(state.idx_history) > 500: state.idx_history.pop(0)
             elif is_ce:
                 state.ce_history.append(target_candle)
-                if len(state.ce_history) > 100: state.ce_history.pop(0)
+                if len(state.ce_history) > 500: state.ce_history.pop(0)
             elif is_pe:
                 state.pe_history.append(target_candle)
-                if len(state.pe_history) > 100: state.pe_history.pop(0)
+                if len(state.pe_history) > 500: state.pe_history.pop(0)
             elif is_subscribed:
                 if clean_symbol not in state.subscribed_history: state.subscribed_history[clean_symbol] = []
                 state.subscribed_history[clean_symbol].append(target_candle)
@@ -1049,8 +1019,6 @@ async def handle_live_update(websocket, state, update):
                     for trade in state.active_trades[:]:
                         # Use the correct price for the trade's symbol
                         exit_price = update['price'] if trade.symbol == prefixed_symbol else trade.entry_price
-                        # Note: In a real scenario, we'd need the latest price for ALL symbols,
-                        # but here we use entry_price as a fallback if it's not the current ticking symbol
                         trade.close(exit_price, candle_time, "EOD_SQUAREOFF")
                         db.store_trade(trade)
                         state.active_trades.remove(trade)
@@ -1068,38 +1036,26 @@ async def handle_live_update(websocket, state, update):
                 ce_df = to_df(state.ce_history)
                 pe_df = to_df(state.pe_history)
 
-                if is_index:
-                    # B. Index-driven: Checked when Index candle closes
-                    for strat in state.strategies["INDEX"]:
-                        if strat.is_index_driven or any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
-                            try:
-                                setup = strat.check_setup(idx_df, state.pcr_insights)
-                                if setup:
-                                    logger.info(f"INDEX SIGNAL TRIGGERED: {strat.name}")
-                                    # For index signals, we need to decide whether to buy CE or PE
-                                    s_type = setup.get('type', '').upper()
-                                    is_pe_signal = ("SHORT" in s_type) or ("PE" in s_type)
-                                    await handle_live_setup(setup, strat, not is_pe_signal, is_pe_signal, state, websocket, target_candle)
-                            except Exception as e:
-                                logger.error(f"Error in index strategy {strat.name}: {e}")
+                # Run unified strategy processor
+                # In Live, we check all strats on ANY candle close to match Replay sequential processing
+                # but only if the relevant dataframes are not empty.
+                # Use current_utc shifted for trading window check inside evaluate_all_strategies
+                new_live_signals = evaluate_all_strategies(state, idx_df, ce_df, pe_df, current_utc, target_candle['time'])
 
-                elif is_ce or is_pe:
-                    # A. Option-driven: Checked when respective Option candle closes
-                    strats_to_check = state.strategies["CE"] if is_ce else state.strategies["PE"]
-                    for strat in strats_to_check:
-                        if not strat.is_index_driven and not any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
-                            try:
-                                setup = strat.check_setup(ce_df if is_ce else pe_df, state.pcr_insights)
-                                if setup:
-                                    logger.info(f"OPTION SIGNAL TRIGGERED: {strat.name} on {clean_symbol}")
-                                    await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
-                            except Exception as e:
-                                logger.error(f"Error in strategy {strat.name}: {e}")
+                for sig in new_live_signals:
+                     color = "#2196F3" if sig['strat_name'] == "TREND_FOLLOWING" else "#FF9800"
+                     marker = {"time": sig['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": sig['strat_name']}
+                     is_pe_t = sig.get('is_pe', False)
+                     if is_pe_t: state.pe_markers.append(marker)
+                     else: state.ce_markers.append(marker)
 
-                    # C. Trend Following: Checked when Option candle closes
-                    tf_strat = state.tf_strategies["CE" if is_ce else "PE"]
-                    setup = tf_strat.check_setup_unified(idx_df, ce_df if is_ce else pe_df, state.pcr_insights, "CE" if is_ce else "PE")
-                    if setup: await handle_live_setup(setup, tf_strat, is_ce, is_pe, state, websocket, target_candle)
+                     await websocket.send_json(clean_json({
+                        "type": "marker_update", "is_ce": not is_pe_t,
+                        "is_pe": is_pe_t,
+                        "symbol": state.pe_sym if is_pe_t else state.ce_sym,
+                        "marker": marker, "signal": sig,
+                        "pnl_stats": state.pnl_tracker.get_stats()
+                     }))
 
         new_candle = {
             "time": candle_time,
