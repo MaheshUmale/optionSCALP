@@ -9,8 +9,27 @@ function initCharts() {
         layout: { background: { type: 'solid', color: '#0c0d10' }, textColor: '#d1d4dc' },
         grid: { vertLines: { color: '#1a1b22' }, horzLines: { color: '#1a1b22' } },
         crosshair: { mode: 1 },
-        timeScale: { borderColor: '#2b2b3b', timeVisible: true, secondsVisible: false },
-        localization: { locale: 'en-US' }
+        timeScale: {
+            borderColor: '#2b2b3b',
+            timeVisible: true,
+            secondsVisible: false,
+            rightOffset: 10,
+            tickMarkFormatter: (time, tickMarkType, locale) => {
+                const date = new Date(time * 1000);
+                const h = String(date.getUTCHours()).padStart(2, '0');
+                const m = String(date.getUTCMinutes()).padStart(2, '0');
+                return `${h}:${m}`;
+            }
+        },
+        localization: {
+            locale: 'en-US',
+            timeFormatter: (timestamp) => {
+                const date = new Date(timestamp * 1000);
+                const h = String(date.getUTCHours()).padStart(2, '0');
+                const m = String(date.getUTCMinutes()).padStart(2, '0');
+                return `${h}:${m}`;
+            }
+        }
     };
 
     idxChart = LightweightCharts.createChart(document.getElementById('index-chart'), chartOptions);

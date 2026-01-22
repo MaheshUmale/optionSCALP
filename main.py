@@ -18,7 +18,11 @@ from data.gathering.data_manager import DataManager
 from data.gathering.live_feed import TradingViewLiveFeed
 from core.strategies.trend_following import TrendFollowingStrategy
 from core.strategies.master_strategies import STRATEGIES
+from core.strategies.delta_volume_strategy import DeltaVolumeStrategy
 from core.trade_manager import Trade, PnLTracker
+
+IST_TZ = timezone(timedelta(hours=5, minutes=30))
+delta_strategy = DeltaVolumeStrategy()
 from trendlyne_client import TrendlyneClient
 from trendlyneAdvClient import TrendlyneScalper
 from tvDatafeed import Interval
@@ -118,6 +122,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     for k in state.tf_strategies: state.tf_strategies[k].update_params(index_sym)
 
                     idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    if not idx_df.empty: idx_df = idx_df.between_time('03:45', '10:00')
+                    if idx_df.empty:
+                        await websocket.send_json({"type": "error", "message": "No index data found for market hours."})
+                        return
+
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
 
                     state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
@@ -125,6 +134,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     ce_df = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
                     pe_df = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    if not ce_df.empty: ce_df = ce_df.between_time('03:45', '10:00')
+                    if not pe_df.empty: pe_df = pe_df.between_time('03:45', '10:00')
 
                     # Seed history for live strategy calculation
                     idx_recs = format_records(idx_df)
@@ -224,8 +235,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.tf_main.update_params(index_sym)
                     for k in state.tf_strategies: state.tf_strategies[k].update_params(index_sym)
                     state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
+                    if not state.replay_data_idx.empty:
+                        state.replay_data_idx = state.replay_data_idx.between_time('03:45', '10:00')
+
                     if state.replay_data_idx.empty:
-                        await websocket.send_json({"type": "error", "message": f"No data found for {index_sym}"})
+                        await websocket.send_json({"type": "error", "message": f"No data found for {index_sym} in market hours."})
                         return
 
                     strike = dm.get_atm_strike(state.replay_data_idx['close'].iloc[0], step=100 if "BANK" in index_sym else 50)
@@ -235,8 +249,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.replay_data_ce = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
                     state.replay_data_pe = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
 
+                    if not state.replay_data_ce.empty: state.replay_data_ce = state.replay_data_ce.between_time('03:45', '10:00')
+                    if not state.replay_data_pe.empty: state.replay_data_pe = state.replay_data_pe.between_time('03:45', '10:00')
+
                     if state.replay_data_ce.empty or state.replay_data_pe.empty:
-                        await websocket.send_json({"type": "error", "message": f"Option data not found for {state.ce_sym} or {state.pe_sym}"})
+                        await websocket.send_json({"type": "error", "message": f"Option data not found for {state.ce_sym} or {state.pe_sym} in market hours."})
                         return
 
                     state.replay_idx = 50
@@ -291,13 +308,12 @@ async def websocket_endpoint(websocket: WebSocket):
 def format_records(df):
     """Formats DataFrame for UI with Unix timestamps shifted to IST for presentation."""
     recs = df.copy().reset_index()
-    # If the index is naive, it is IST as returned by tvDatafeed for NSE.
-    # Localize to IST and convert to UTC for correct Unix timestamp.
+    # Data is already localized to UTC in DataManager.get_data
     if recs['datetime'].dt.tz is None:
         recs['datetime'] = recs['datetime'].dt.tz_localize('Asia/Kolkata').dt.tz_convert('UTC')
 
     # Add Unix timestamp in seconds.
-    # Shift by 5.5 hours (19800s) to force UI to show IST even if browser is in UTC.
+    # Shift by 5.5 hours (19800s) to force UI to show IST digits as UTC.
     recs['time'] = recs['datetime'].apply(lambda x: int(x.timestamp()) + 19800)
 
     # Keep ISO string for reference if needed
@@ -309,6 +325,7 @@ def format_records(df):
     return recs.to_dict(orient='records')
 
 def normalize_buildup(status):
+    if not status: return "NEUTRAL"
     s = str(status).upper()
     if "LONG BUILD" in s: return "LONG BUILD"
     if "SHORT COVER" in s: return "SHORT COVER"
@@ -318,13 +335,14 @@ def normalize_buildup(status):
 
 def get_buildup_for_time(buildup_history, current_time):
     """
-    Parses buildup_history (list of ['9:15 TO 9:20', 'Status', ...])
-    to find the one matching current_time (datetime or timestamp).
+    Parses buildup_history to find the one matching current_time.
+    Supports both list-of-lists and list-of-dicts formats from Trendlyne.
     """
     if not buildup_history: return "NEUTRAL"
 
     if isinstance(current_time, (int, float)):
         # Convert shifted IST timestamp back to naive datetime for matching
+        # Note: shifted timestamp is IST as UTC, so utcfromtimestamp gives IST digits
         dt = datetime.utcfromtimestamp(current_time)
     else:
         dt = current_time
@@ -332,16 +350,25 @@ def get_buildup_for_time(buildup_history, current_time):
     curr_str = dt.strftime("%H:%M")
 
     for row in buildup_history:
-        if isinstance(row, list) and len(row) > 0:
-            time_range = row[0] # "09:15 TO 09:20"
-            try:
-                # Handle both "HH:MM TO HH:MM" and other potential formats
-                if " TO " in time_range:
-                    start_str, end_str = time_range.split(" TO ")
-                    if start_str <= curr_str <= end_str:
-                        return normalize_buildup(row[1])
-            except:
-                continue
+        time_range = None
+        status = None
+
+        if isinstance(row, list) and len(row) > 1:
+            time_range = row[0]
+            status = row[1]
+        elif isinstance(row, dict):
+            time_range = row.get('interval') or row.get('time_range')
+            status = row.get('buildup') or row.get('status') or row.get('buildup_type')
+
+        if not time_range: continue
+
+        try:
+            if " TO " in time_range:
+                start_str, end_str = time_range.split(" TO ")
+                if start_str <= curr_str <= end_str:
+                    return normalize_buildup(status)
+        except:
+            continue
     return None
 
 async def send_replay_step(websocket, state):
@@ -389,21 +416,25 @@ async def send_replay_step(websocket, state):
                 if setup:
                     is_ce_trade = (setup.get('type') == 'LONG')
                     target_recs = ce_recs if is_ce_trade else pe_recs
+                    target_df = sub_ce if is_ce_trade else sub_pe
                     target_sym = state.ce_sym if is_ce_trade else state.pe_sym
                     target_markers = state.ce_markers if is_ce_trade else state.pe_markers
 
                     setup['strat_name'] = strat.name
                     setup['time'] = target_recs[-1]['time']
-                    setup['entry_price'] = target_recs[-1]['close']
-                    setup['sl'] = setup['entry_price'] - sl_dist
-                    setup['target'] = setup['entry_price'] + sl_dist * 2
+                    setup['entry_price'] = setup.get('entry_price') or target_df['close'].iloc[-1]
+                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
+                    setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
 
                     if handle_new_trade(state, strat.name, target_sym, setup, setup['time']):
                         new_signals.append(setup)
                         target_markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
 
         # B. Option-driven strategies
-        for side, sym, df, markers, strat_list, recs in [("CE", state.ce_sym, sub_ce, state.ce_markers, state.strategies["CE"], ce_recs), ("PE", state.pe_sym, sub_pe, state.pe_markers, state.strategies["PE"], pe_recs)]:
+        for side, sym, df, markers, strat_list, recs in [
+            ("CE", state.ce_sym, sub_ce, state.ce_markers, state.strategies["CE"], ce_recs),
+            ("PE", state.pe_sym, sub_pe, state.pe_markers, state.strategies["PE"], pe_recs)
+        ]:
             for strat in strat_list:
                 is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
                 if not is_index_driven:
@@ -411,9 +442,11 @@ async def send_replay_step(websocket, state):
                     if setup:
                         setup['strat_name'] = strat.name
                         setup['time'] = recs[-1]['time']
-                        setup['entry_price'] = df['close'].iloc[-1]
-                        setup['sl'] = setup['entry_price'] - sl_dist
-                        setup['target'] = setup['entry_price'] + sl_dist * 2
+                        setup['entry_price'] = setup.get('entry_price') or df['close'].iloc[-1]
+                        # Prefer strategy SL/Target if they exist
+                        setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
+                        setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
+
                         if handle_new_trade(state, strat.name, sym, setup, setup['time']):
                             new_signals.append(setup)
                             markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
@@ -513,7 +546,7 @@ async def fetch_pcr_insights(index_sym, ref_date=None):
             if isinstance(latest, list) and len(latest) > 1:
                 status = latest[1]
             elif isinstance(latest, dict):
-                status = latest.get('status') or latest.get('buildup_type') or "NEUTRAL"
+                status = latest.get('buildup') or latest.get('status') or latest.get('buildup_type') or "NEUTRAL"
 
             insights['buildup_status'] = normalize_buildup(status)
 
@@ -614,9 +647,9 @@ async def handle_live_update(websocket, state, update):
             volume_delta = 0
         state.last_total_volumes[symbol] = current_total_volume
 
-    now = int(datetime.now().timestamp())
+    now = int(datetime.now(timezone.utc).timestamp())
     interval_sec = 60
-    # Apply 5.5h shift for IST presentation
+    # Apply 5.5h shift for IST presentation (Force IST digits as UTC)
     candle_time = ((now + 19800) // interval_sec) * interval_sec
 
     if is_index: target_candle = state.last_idx_candle
