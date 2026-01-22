@@ -309,7 +309,7 @@ def format_records(df):
     """Formats DataFrame for UI with Unix timestamps shifted to IST for presentation."""
     recs = df.copy().reset_index()
     # Data is already localized to UTC in DataManager.get_data
-    if recs['datetime'].dt.tz is None:
+    if recs['datetime'] is None or recs['datetime'].dt.tz is None:
         recs['datetime'] = recs['datetime'].dt.tz_localize('Asia/Kolkata').dt.tz_convert('UTC')
 
     # Add Unix timestamp in seconds.
