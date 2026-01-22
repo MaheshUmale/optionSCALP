@@ -242,7 +242,15 @@ class DataManager:
             except Exception as e:
                 print(f"Upstox fetch error for {clean_sym}: {e}")
 
-
+        # 3. Fallback to TvFeed
+        if df is None or df.empty:
+            print(f"Falling back to TvFeed for {clean_sym}")
+            df = self.feed.get_historical_data(
+                symbol=clean_sym,
+                exchange="NSE",
+                interval=interval,
+                n_bars=n_bars
+            )
         if df is not None and not df.empty:
             print(f"Successfully fetched {len(df)} bars for {clean_sym} from TvFeed")
             # Standardize index to UTC
