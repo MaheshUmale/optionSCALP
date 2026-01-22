@@ -38,7 +38,10 @@ function initCharts() {
 
     const candleStyle = {
         upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-        wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+        wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+        priceLineVisible: true,
+        lastValueVisible: true,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.05 },
     };
 
     idxSeries = idxChart.addCandlestickSeries({
@@ -152,42 +155,45 @@ ws.onmessage = (event) => {
         }
 
         if (data.index_data && idxSeries) {
-            idxSeries.setData(data.index_data.map(d => ({
+            const formatted = data.index_data.map(d => ({
                 time: d.time,
                 open: d.open, high: d.high, low: d.low, close: d.close
-            })));
+            }));
+            idxSeries.setData(formatted);
             idxVolSeries.setData(data.index_data.map(d => ({
                 time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
             })));
-            idxChart.timeScale().fitContent();
+            setTimeout(() => idxChart.timeScale().fitContent(), 100);
         }
 
         if (data.ce_data && ceSeries) {
-            ceSeries.setData(data.ce_data.map(d => ({
+            const formatted = data.ce_data.map(d => ({
                 time: d.time,
                 open: d.open, high: d.high, low: d.low, close: d.close
-            })));
+            }));
+            ceSeries.setData(formatted);
             ceVolSeries.setData(data.ce_data.map(d => ({
                 time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
             })));
             if (data.ce_markers) {
                 ceSeries.setMarkers(data.ce_markers);
             }
-            ceChart.timeScale().fitContent();
+            setTimeout(() => ceChart.timeScale().fitContent(), 100);
         }
 
         if (data.pe_data && peSeries) {
-            peSeries.setData(data.pe_data.map(d => ({
+            const formatted = data.pe_data.map(d => ({
                 time: d.time,
                 open: d.open, high: d.high, low: d.low, close: d.close
-            })));
+            }));
+            peSeries.setData(formatted);
             peVolSeries.setData(data.pe_data.map(d => ({
                 time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
             })));
             if (data.pe_markers) {
                 peSeries.setMarkers(data.pe_markers);
             }
-            peChart.timeScale().fitContent();
+            setTimeout(() => peChart.timeScale().fitContent(), 100);
         }
 
         if (data.index_symbol || data.index_data) {

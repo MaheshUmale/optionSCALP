@@ -214,6 +214,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     await websocket.send_json(clean_json({
                         "type": "live_data",
+                        "index_symbol": index_sym,
                         "index_data": format_records(idx_df),
                         "ce_data": ce_recs,
                         "pe_data": pe_recs,
@@ -897,7 +898,9 @@ async def handle_live_update(websocket, state, update):
             target_candle['open'] = u_ohlc.get('open', target_candle['open'])
             target_candle['high'] = max(target_candle['high'], u_ohlc.get('high', 0))
             target_candle['low'] = min(target_candle['low'], u_ohlc.get('low', 999999))
-            target_candle['close'] = u_ohlc.get('close', target_candle['close'])
+                        # Note: We don't overwrite 'close' here if it's the current candle,
+                        # because update['price'] (LTP) is more recent.
+                        # But we update high/low from broker's aggregated view.
             if u_ohlc.get('volume'): target_candle['volume'] = float(u_ohlc['volume'])
 
         # 2. Update historical candles if they match (I1 is often 1-2 minutes old)
@@ -1032,7 +1035,7 @@ async def handle_live_update(websocket, state, update):
                 "trend": state.tf_main.get_trend(pd.DataFrame(state.idx_history), state.pcr_insights) if state.idx_history else None
             }))
     else:
-        # Update current candle from tick
+        # Update current candle from tick (ALWAYS USE LTP)
         target_candle['close'] = update['price']
         if update['price'] > target_candle['high']: target_candle['high'] = update['price']
         if update['price'] < target_candle['low']: target_candle['low'] = update['price']
