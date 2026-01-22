@@ -453,8 +453,8 @@ def is_within_trading_window(ts_utc):
     h, m = ist_dt.hour, ist_dt.minute
     current_time = h * 60 + m
 
-    start_time = 9 * 60 + 20
-    end_time = 15 * 60 + 17
+    start_time = 9 * 60 + 15
+    end_time = 15 * 60 + 25
 
     return start_time <= current_time <= end_time
 
@@ -598,7 +598,11 @@ async def send_replay_step(websocket, state):
             state.pcr_insights['buildup_status'] = hist_buildup
 
         # 4. Check Active Trades
+        old_trades_count = len(state.active_trades)
         check_trade_exits(state, sub_idx, sub_ce, sub_pe)
+        if len(state.active_trades) != old_trades_count:
+             # Re-calculate stats if a trade closed
+             state.pnl_tracker.update_stats()
 
         # EOD Square-off check
         if is_market_closing(last_time):
@@ -877,7 +881,8 @@ async def handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target
             "type": "marker_update", "is_ce": not is_pe_t,
             "is_pe": is_pe_t,
             "symbol": symbol,
-            "marker": marker, "signal": setup
+            "marker": marker, "signal": setup,
+            "pnl_stats": state.pnl_tracker.get_stats()
         }))
 
 async def handle_live_update(websocket, state, update):
@@ -974,25 +979,28 @@ async def handle_live_update(websocket, state, update):
                 state.subscribed_history[clean_symbol].append(target_candle)
                 if len(state.subscribed_history[clean_symbol]) > 100: state.subscribed_history[clean_symbol].pop(0)
 
-            # Check for strategy setup on closed candle (Unified & Segregated)
-            if (is_ce or is_pe) and len(state.idx_history) > 20:
+            # Strategy and Square-off check on closed candle
+            if len(state.idx_history) > 20:
                 logger.info(f"Processing strategies on closed candle: {target_candle['time']} for {clean_symbol}")
                 current_utc = datetime.now(timezone.utc)
 
                 # EOD Square-off check for live mode
                 if is_market_closing(current_utc):
                     for trade in state.active_trades[:]:
-                        # Simplified for live
-                        trade.close(update['price'], candle_time, "EOD_SQUAREOFF")
+                        # Use the correct price for the trade's symbol
+                        exit_price = update['price'] if trade.symbol == prefixed_symbol else trade.entry_price
+                        # Note: In a real scenario, we'd need the latest price for ALL symbols,
+                        # but here we use entry_price as a fallback if it's not the current ticking symbol
+                        trade.close(exit_price, candle_time, "EOD_SQUAREOFF")
                         db.store_trade(trade)
                         state.active_trades.remove(trade)
                     return
 
                 # Convert history to DataFrames with proper index for pandas_ta
                 def to_df(hist):
+                    if not hist: return pd.DataFrame()
                     df = pd.DataFrame(hist)
                     if 'time' in df.columns:
-                        # shifted IST unix timestamp back to naive/UTC for index
                         df.index = pd.to_datetime(df['time'] - 19800, unit='s')
                     return df
 
@@ -1000,34 +1008,38 @@ async def handle_live_update(websocket, state, update):
                 ce_df = to_df(state.ce_history)
                 pe_df = to_df(state.pe_history)
 
-                # A. Option-driven
-                strats_to_check = state.strategies["CE"] if is_ce else state.strategies["PE"]
-                for strat in strats_to_check:
-                    if not strat.is_index_driven and not any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
-                        try:
-                            setup = strat.check_setup(ce_df if is_ce else pe_df, state.pcr_insights)
-                            if setup:
-                                logger.info(f"SIGNAL TRIGGERED: {strat.name} on {clean_symbol}")
-                                await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
-                        except Exception as e:
-                            logger.error(f"Error in strategy {strat.name}: {e}")
-
-                # B. Index-driven (on CE close to avoid duplicates)
-                if is_ce:
+                if is_index:
+                    # B. Index-driven: Checked when Index candle closes
                     for strat in state.strategies["INDEX"]:
                         if strat.is_index_driven or any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
                             try:
                                 setup = strat.check_setup(idx_df, state.pcr_insights)
                                 if setup:
                                     logger.info(f"INDEX SIGNAL TRIGGERED: {strat.name}")
-                                    await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
+                                    # For index signals, we need to decide whether to buy CE or PE
+                                    s_type = setup.get('type', '').upper()
+                                    is_pe_signal = ("SHORT" in s_type) or ("PE" in s_type)
+                                    await handle_live_setup(setup, strat, not is_pe_signal, is_pe_signal, state, websocket, target_candle)
                             except Exception as e:
                                 logger.error(f"Error in index strategy {strat.name}: {e}")
 
-                # C. Trend Following
-                tf_strat = state.tf_strategies["CE" if is_ce else "PE"]
-                setup = tf_strat.check_setup_unified(idx_df, ce_df if is_ce else pe_df, state.pcr_insights, "CE" if is_ce else "PE")
-                if setup: await handle_live_setup(setup, tf_strat, is_ce, is_pe, state, websocket, target_candle)
+                elif is_ce or is_pe:
+                    # A. Option-driven: Checked when respective Option candle closes
+                    strats_to_check = state.strategies["CE"] if is_ce else state.strategies["PE"]
+                    for strat in strats_to_check:
+                        if not strat.is_index_driven and not any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
+                            try:
+                                setup = strat.check_setup(ce_df if is_ce else pe_df, state.pcr_insights)
+                                if setup:
+                                    logger.info(f"OPTION SIGNAL TRIGGERED: {strat.name} on {clean_symbol}")
+                                    await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
+                            except Exception as e:
+                                logger.error(f"Error in strategy {strat.name}: {e}")
+
+                    # C. Trend Following: Checked when Option candle closes
+                    tf_strat = state.tf_strategies["CE" if is_ce else "PE"]
+                    setup = tf_strat.check_setup_unified(idx_df, ce_df if is_ce else pe_df, state.pcr_insights, "CE" if is_ce else "PE")
+                    if setup: await handle_live_setup(setup, tf_strat, is_ce, is_pe, state, websocket, target_candle)
 
         new_candle = {
             "time": candle_time,
@@ -1093,9 +1105,39 @@ async def handle_live_update(websocket, state, update):
                  target_candle['low'] = min(target_candle['low'], u_ohlc.get('low', 999999))
                  # target_candle['close'] remains LTP
 
+    # Check for exits on every tick for active trades of this symbol
+    for trade in state.active_trades[:]:
+        if trade.symbol == prefixed_symbol:
+            last_price = update['price']
+            # shifted IST unix timestamp
+            last_time = candle_time
+
+            closed = False
+            exit_price = 0
+            reason = ""
+
+            if trade.trade_type == 'LONG':
+                if trade.sl and last_price <= trade.sl:
+                    closed, exit_price, reason = True, trade.sl, 'SL'
+                elif trade.target and last_price >= trade.target:
+                    closed, exit_price, reason = True, trade.target, 'TARGET'
+
+            if closed:
+                trade.close(exit_price, last_time, reason)
+                db.store_trade(trade)
+                state.last_trade_close_times[(trade.strategy_name, trade.symbol)] = last_time
+                state.active_trades.remove(trade)
+                logger.info(f"TRADE CLOSED: {trade.strategy_name} on {trade.symbol} at {exit_price} ({reason})")
+                # Important: update_stats() is called inside get_stats()
+                await websocket.send_json(clean_json({
+                    "type": "pnl_stats",
+                    "pnl_stats": state.pnl_tracker.get_stats()
+                }))
+
     await websocket.send_json(clean_json({
         "type": "live_update", "symbol": prefixed_symbol, "candle": target_candle,
-        "is_index": is_index, "is_ce": is_ce, "is_pe": is_pe
+        "is_index": is_index, "is_ce": is_ce, "is_pe": is_pe,
+        "pnl_stats": state.pnl_tracker.get_stats() if state.active_trades else None
     }))
 
 
