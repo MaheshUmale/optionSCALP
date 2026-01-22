@@ -414,11 +414,12 @@ async def send_replay_step(websocket, state):
             if is_index_driven:
                 setup = strat.check_setup(sub_idx, state.pcr_insights)
                 if setup:
-                    is_ce_trade = (setup.get('type') == 'LONG')
-                    target_recs = ce_recs if is_ce_trade else pe_recs
-                    target_df = sub_ce if is_ce_trade else sub_pe
-                    target_sym = state.ce_sym if is_ce_trade else state.pe_sym
-                    target_markers = state.ce_markers if is_ce_trade else state.pe_markers
+                    s_type = setup.get('type', '').upper()
+                    is_pe_trade = ("SHORT" in s_type) or ("PE" in s_type)
+                    target_df = sub_pe if is_pe_trade else sub_ce
+                    target_sym = state.pe_sym if is_pe_trade else state.ce_sym
+                    target_markers = state.pe_markers if is_pe_trade else state.ce_markers
+                    target_recs = pe_recs if is_pe_trade else ce_recs
 
                     setup['strat_name'] = strat.name
                     setup['time'] = target_recs[-1]['time']
@@ -440,22 +441,32 @@ async def send_replay_step(websocket, state):
                 if not is_index_driven:
                     setup = strat.check_setup(df, state.pcr_insights)
                     if setup:
+                        s_type = setup.get('type', '').upper()
+                        is_pe_trade = ("SHORT" in s_type) or ("PE" in s_type)
+                        # Routing: SHORT signal on ANY chart -> Buy PE. LONG signal on ANY chart -> Buy CE.
+                        # EXCEPT: If we are on PE chart, LONG means Bullish on PE (Market Bearish) -> Buy PE.
+                        # Actually, simplified: LONG = CE, SHORT = PE (matches user instruction)
+                        target_sym = state.pe_sym if is_pe_trade else state.ce_sym
+                        target_markers = state.pe_markers if is_pe_trade else state.ce_markers
+                        target_df = sub_pe if is_pe_trade else sub_ce
+                        target_recs = pe_recs if is_pe_trade else ce_recs
+
                         setup['strat_name'] = strat.name
-                        setup['time'] = recs[-1]['time']
-                        setup['entry_price'] = setup.get('entry_price') or df['close'].iloc[-1]
-                        # Prefer strategy SL/Target if they exist
+                        setup['time'] = target_recs[-1]['time']
+                        setup['entry_price'] = setup.get('entry_price') or target_df['close'].iloc[-1]
                         setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
                         setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
 
-                        if handle_new_trade(state, strat.name, sym, setup, setup['time']):
+                        if handle_new_trade(state, strat.name, target_sym, setup, setup['time']):
                             new_signals.append(setup)
-                            markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
+                            target_markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
 
         # C. Trend Following
         for side, sym, df, markers, recs in [("CE", state.ce_sym, sub_ce, state.ce_markers, ce_recs), ("PE", state.pe_sym, sub_pe, state.pe_markers, pe_recs)]:
             tf_strat = state.tf_strategies[side]
             setup = tf_strat.check_setup_unified(sub_idx, df, state.pcr_insights, side)
             if setup:
+                # TF is already side-aware, so we use its directed symbol
                 setup['strat_name'] = tf_strat.name
                 setup['time'] = recs[-1]['time']
                 setup['entry_price'] = df['close'].iloc[-1]
@@ -604,23 +615,35 @@ async def fetch_trendlyne_signals(index_sym, atm_strike):
 
 async def handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle):
     sl_dist = 30 if "BANK" in state.index_sym else 20
+
+    s_type = setup.get('type', '').upper()
+    is_pe_t = ("SHORT" in s_type) or ("PE" in s_type)
+    symbol = state.pe_sym if is_pe_t else state.ce_sym
+
+    # Use correct instrument price for entry if not provided
+    if setup.get('entry_price'):
+        entry = setup['entry_price']
+    else:
+        if is_pe_t: entry = state.last_pe_candle['close'] if state.last_pe_candle else target_candle['close']
+        else: entry = state.last_ce_candle['close'] if state.last_ce_candle else target_candle['close']
+
     setup['strat_name'] = strat.name
     setup['time'] = target_candle['time']
-    setup['entry_price'] = setup.get('entry_price') or target_candle['close']
-    setup['sl'] = setup['entry_price'] - sl_dist
-    setup['target'] = setup['entry_price'] + sl_dist * 2
-
-    is_ce_t = (is_ce or (setup.get('type') == 'LONG' and not is_pe))
-    symbol = state.ce_sym if is_ce_t else state.pe_sym
+    setup['entry_price'] = entry
+    setup['sl'] = setup.get('sl') or (entry - sl_dist)
+    setup['target'] = setup.get('target') or (entry + sl_dist * 2)
 
     if handle_new_trade(state, strat.name, symbol, setup, target_candle['time']):
         color = "#2196F3" if strat.name == "TREND_FOLLOWING" else "#FF9800"
         marker = {"time": target_candle['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": strat.name}
-        if is_ce_t: state.ce_markers.append(marker)
-        else: state.pe_markers.append(marker)
+        if not is_pe_t:
+            state.ce_markers.append(marker)
+        else:
+            state.pe_markers.append(marker)
+
         await websocket.send_json(clean_json({
-            "type": "marker_update", "is_ce": is_ce_t,
-            "is_pe": not is_ce_t,
+            "type": "marker_update", "is_ce": not is_pe_t,
+            "is_pe": is_pe_t,
             "marker": marker, "signal": setup
         }))
 
