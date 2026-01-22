@@ -177,7 +177,7 @@ class DataManager:
         return None
 
     def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100, reference_date=None):
-        print(f"DataManager.get_data called for {symbol} (n_bars={n_bars})")
+        logger.info(f"DataManager.get_data called for {symbol} (n_bars={n_bars})")
         # Clean symbol if needed (e.g. remove NSE: prefix for inner searches)
         clean_sym = symbol.replace("NSE:", "")
         int_str = str(interval)
@@ -185,7 +185,7 @@ class DataManager:
         # 1. Try DB first
         df_db = self.db.get_ohlcv(clean_sym, int_str)
         if not df_db.empty and len(df_db) >= n_bars:
-            print(f"Returning {len(df_db)} bars from cache for {clean_sym}")
+            logger.info(f"Returning {len(df_db)} bars from cache for {clean_sym}")
             return df_db.tail(n_bars)
 
         df = None
@@ -197,7 +197,7 @@ class DataManager:
                 if inst_key:
                     # Map TV interval to Upstox interval string
                     u_interval = "1m" if "1" in int_str else "5m"
-                    print(f"Attempting Upstox fetch for {clean_sym} ({inst_key})")
+                    logger.info(f"Attempting Upstox fetch for {clean_sym} ({inst_key})")
                     res = self.upstox_client.get_intra_day_candle_data(inst_key, u_interval)
                     if res and res.status == 'success' and res.data and res.data.candles:
                         # Upstox candles: [timestamp, open, high, low, close, volume, oi]
