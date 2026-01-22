@@ -3,6 +3,7 @@ const ws = new WebSocket(`ws://${window.location.host}/ws`);
 let idxChart, ceChart, peChart;
 let idxSeries, ceSeries, peSeries;
 let idxVolSeries, ceVolSeries, peVolSeries;
+let ceMarkers = [], peMarkers = [];
 
 function initCharts() {
     const chartOptions = {
@@ -32,9 +33,18 @@ function initCharts() {
         }
     };
 
-    idxChart = LightweightCharts.createChart(document.getElementById('index-chart'), chartOptions);
-    ceChart = LightweightCharts.createChart(document.getElementById('ce-chart'), chartOptions);
-    peChart = LightweightCharts.createChart(document.getElementById('pe-chart'), chartOptions);
+    const idxEl = document.getElementById('index-chart');
+    const ceEl = document.getElementById('ce-chart');
+    const peEl = document.getElementById('pe-chart');
+
+    if (!idxEl || !ceEl || !peEl) {
+        console.log("Charts not found in DOM, skipping initialization.");
+        return;
+    }
+
+    idxChart = LightweightCharts.createChart(idxEl, chartOptions);
+    ceChart = LightweightCharts.createChart(ceEl, chartOptions);
+    peChart = LightweightCharts.createChart(peEl, chartOptions);
 
     const candleStyle = {
         upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
@@ -132,6 +142,8 @@ ws.onmessage = (event) => {
     }
 
     if (data.type === 'reset_ui') {
+        ceMarkers = [];
+        peMarkers = [];
         if (ceSeries) ceSeries.setMarkers([]);
         if (peSeries) peSeries.setMarkers([]);
         document.getElementById('signals-list').innerHTML = '';
@@ -162,30 +174,43 @@ ws.onmessage = (event) => {
             if (data.type === 'live_data') setTimeout(() => idxChart.timeScale().fitContent(), 100);
         }
 
-        if (c_data && ceSeries) {
-            ceSeries.setData(c_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
-            ceVolSeries.setData(c_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
-            if (data.ce_markers) ceSeries.setMarkers(data.ce_markers);
-            if (data.type === 'live_data') setTimeout(() => ceChart.timeScale().fitContent(), 100);
+        if (c_data) {
+            if (ceSeries) {
+                ceSeries.setData(c_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
+                ceVolSeries.setData(c_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
+                if (data.type === 'live_data') setTimeout(() => ceChart.timeScale().fitContent(), 100);
+            }
+            if (data.ce_markers) {
+                ceMarkers = data.ce_markers;
+                if (ceSeries) ceSeries.setMarkers(ceMarkers);
+            }
         }
 
-        if (p_data && peSeries) {
-            peSeries.setData(p_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
-            peVolSeries.setData(p_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
-            if (data.pe_markers) peSeries.setMarkers(data.pe_markers);
-            if (data.type === 'live_data') setTimeout(() => peChart.timeScale().fitContent(), 100);
+        if (p_data) {
+            if (peSeries) {
+                peSeries.setData(p_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
+                peVolSeries.setData(p_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
+                if (data.type === 'live_data') setTimeout(() => peChart.timeScale().fitContent(), 100);
+            }
+            if (data.pe_markers) {
+                peMarkers = data.pe_markers;
+                if (peSeries) peSeries.setMarkers(peMarkers);
+            }
         }
 
         if (data.index_symbol || data.index_data) {
              const sym = data.index_symbol || document.getElementById('index-select').value;
              document.getElementById('index-popout').href = `/chart?symbol=${sym}`;
+             if (document.getElementById('label-index')) document.getElementById('label-index').innerText = `INDEX: ${sym}`;
         }
         if (data.ce_symbol) {
-            document.getElementById('ce-label').querySelector('span').innerText = `CE OPTION: ${data.ce_symbol}`;
+            const label = document.getElementById('label-ce') || (document.getElementById('ce-label') ? document.getElementById('ce-label').querySelector('span') : null);
+            if (label) label.innerText = `CE OPTION: ${data.ce_symbol}`;
             document.getElementById('ce-popout').href = `/chart?symbol=${data.ce_symbol}`;
         }
         if (data.pe_symbol) {
-            document.getElementById('pe-label').querySelector('span').innerText = `PE OPTION: ${data.pe_symbol}`;
+            const label = document.getElementById('label-pe') || (document.getElementById('pe-label') ? document.getElementById('pe-label').querySelector('span') : null);
+            if (label) label.innerText = `PE OPTION: ${data.pe_symbol}`;
             document.getElementById('pe-popout').href = `/chart?symbol=${data.pe_symbol}`;
         }
         if (data.new_signals) {
@@ -200,12 +225,17 @@ ws.onmessage = (event) => {
         const v = { time: c.time, value: c.volume, color: c.close >= c.open ? '#26a69a' : '#ef5350' };
 
         if (data.is_index) {
-            idxSeries.update(c);
-            idxVolSeries.update(v);
-        } else if (data.is_ce) {
+            if (idxSeries) {
+                idxSeries.update(c);
+                idxVolSeries.update(v);
+            }
+            if (document.getElementById('display-index-val')) {
+                document.getElementById('display-index-val').innerText = c.close.toFixed(2);
+            }
+        } else if (data.is_ce && ceSeries) {
             ceSeries.update(c);
             ceVolSeries.update(v);
-        } else if (data.is_pe) {
+        } else if (data.is_pe && peSeries) {
             peSeries.update(c);
             peVolSeries.update(v);
         }
@@ -217,6 +247,15 @@ ws.onmessage = (event) => {
 
     if (data.pcr_insights) {
         updatePCRInsights(data.pcr_insights);
+        if (document.getElementById('display-pcr')) {
+            document.getElementById('display-pcr').innerText = `${data.pcr_insights.pcr} (${data.pcr_insights.buildup_status || 'NEUTRAL'})`;
+        }
+    }
+
+    if (data.trend) {
+        if (document.getElementById('display-trend')) {
+             document.getElementById('display-trend').innerText = data.trend;
+        }
     }
 
     if (data.option_chain) {
@@ -229,8 +268,14 @@ ws.onmessage = (event) => {
     }
 
     if (data.type === 'marker_update') {
-        if (data.is_ce) ceSeries.setMarkers([...ceSeries.markers() || [], data.marker]);
-        if (data.is_pe) peSeries.setMarkers([...peSeries.markers() || [], data.marker]);
+        if (data.is_ce) {
+            ceMarkers.push(data.marker);
+            if (ceSeries) ceSeries.setMarkers(ceMarkers);
+        }
+        if (data.is_pe) {
+            peMarkers.push(data.marker);
+            if (peSeries) peSeries.setMarkers(peMarkers);
+        }
         if (data.signal) updateSignal(data.signal);
     }
 };
@@ -297,6 +342,14 @@ function updatePnLStats(stats) {
         <div style="font-size: 11px;">Closed: ${stats.total_closed} | Open: ${stats.total_trades - stats.total_closed}</div>
         <div style="font-size: 11px;">Win: ${stats.win_count} | Loss: ${stats.loss_count} | WR: ${stats.win_rate}%</div>
     `;
+
+    // Also update dashboard PnL card if it exists
+    const dashPnl = document.getElementById('dashboard-pnl');
+    if (dashPnl) {
+        dashPnl.querySelector('.pnl-main').innerText = `₹${stats.total_pnl.toFixed(2)}`;
+        dashPnl.querySelector('.pnl-main').style.color = color;
+        dashPnl.querySelector('.pnl-sub').innerText = `Wins: ${stats.win_count} | Losses: ${stats.loss_count} | WR: ${stats.win_rate}%`;
+    }
 }
 
 function fetchLive() { ws.send(JSON.stringify({ type: 'fetch_live', index: document.getElementById('index-select').value })); }

@@ -20,28 +20,41 @@
         <div id="status" class="status">System Ready</div>
     </div>
 
-    <div class="main-container">
-        <div class="chart-section">
-            <div class="chart-container">
-                <div class="chart-label" id="index-label">
-                    <span>INDEX</span>
-                    <a href="#" id="index-popout" target="_blank" class="popout-link">↗ Popout</a>
+    <div class="main-container dashboard-mode">
+        <div class="dashboard-grid">
+            <div class="dashboard-card status-card">
+                <h3>MARKET STATUS</h3>
+                <div id="market-status-details">
+                    <p>Current Index: <span id="display-index-val">---</span></p>
+                    <p>Trend: <span id="display-trend">---</span></p>
+                    <p>PCR: <span id="display-pcr">---</span></p>
                 </div>
-                <div id="index-chart" class="chart-box"></div>
             </div>
-            <div class="chart-container">
-                <div class="chart-label" id="ce-label">
-                    <span>CE OPTION</span>
-                    <a href="#" id="ce-popout" target="_blank" class="popout-link">↗ Popout</a>
+
+            <div class="dashboard-card instruments-card">
+                <h3>LIVE INSTRUMENTS</h3>
+                <div class="instrument-links">
+                    <div class="inst-item">
+                        <span id="label-index">INDEX</span>
+                        <a href="#" id="index-popout" target="_blank" class="popout-btn">OPEN LIVE CHART</a>
+                    </div>
+                    <div class="inst-item">
+                        <span id="label-ce">CE OPTION</span>
+                        <a href="#" id="ce-popout" target="_blank" class="popout-btn">OPEN LIVE CHART</a>
+                    </div>
+                    <div class="inst-item">
+                        <span id="label-pe">PE OPTION</span>
+                        <a href="#" id="pe-popout" target="_blank" class="popout-btn">OPEN LIVE CHART</a>
+                    </div>
                 </div>
-                <div id="ce-chart" class="chart-box"></div>
             </div>
-            <div class="chart-container">
-                <div class="chart-label" id="pe-label">
-                    <span>PE OPTION</span>
-                    <a href="#" id="pe-popout" target="_blank" class="popout-link">↗ Popout</a>
+
+            <div class="dashboard-card pnl-card">
+                <h3>PNL TRACKER</h3>
+                <div id="dashboard-pnl">
+                    <div class="pnl-main">₹0.00</div>
+                    <div class="pnl-sub">Wins: 0 | Losses: 0</div>
                 </div>
-                <div id="pe-chart" class="chart-box"></div>
             </div>
         </div>
     </div>
