@@ -18,7 +18,11 @@ from data.gathering.data_manager import DataManager
 from data.gathering.live_feed import TradingViewLiveFeed
 from core.strategies.trend_following import TrendFollowingStrategy
 from core.strategies.master_strategies import STRATEGIES
+from core.strategies.delta_volume_strategy import DeltaVolumeStrategy
 from core.trade_manager import Trade, PnLTracker
+
+IST_TZ = timezone(timedelta(hours=5, minutes=30))
+delta_strategy = DeltaVolumeStrategy()
 from trendlyne_client import TrendlyneClient
 from trendlyneAdvClient import TrendlyneScalper
 from tvDatafeed import Interval
@@ -118,6 +122,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     for k in state.tf_strategies: state.tf_strategies[k].update_params(index_sym)
 
                     idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    if not idx_df.empty: idx_df = idx_df.between_time('03:45', '10:00')
+                    if idx_df.empty:
+                        await websocket.send_json({"type": "error", "message": "No index data found for market hours."})
+                        return
+
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
 
                     state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
@@ -125,6 +134,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     ce_df = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000)
                     pe_df = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000)
+                    if not ce_df.empty: ce_df = ce_df.between_time('03:45', '10:00')
+                    if not pe_df.empty: pe_df = pe_df.between_time('03:45', '10:00')
 
                     # Seed history for live strategy calculation
                     idx_recs = format_records(idx_df)
@@ -224,8 +235,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.tf_main.update_params(index_sym)
                     for k in state.tf_strategies: state.tf_strategies[k].update_params(index_sym)
                     state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
+                    if not state.replay_data_idx.empty:
+                        state.replay_data_idx = state.replay_data_idx.between_time('03:45', '10:00')
+
                     if state.replay_data_idx.empty:
-                        await websocket.send_json({"type": "error", "message": f"No data found for {index_sym}"})
+                        await websocket.send_json({"type": "error", "message": f"No data found for {index_sym} in market hours."})
                         return
 
                     strike = dm.get_atm_strike(state.replay_data_idx['close'].iloc[0], step=100 if "BANK" in index_sym else 50)
@@ -235,8 +249,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.replay_data_ce = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
                     state.replay_data_pe = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
 
+                    if not state.replay_data_ce.empty: state.replay_data_ce = state.replay_data_ce.between_time('03:45', '10:00')
+                    if not state.replay_data_pe.empty: state.replay_data_pe = state.replay_data_pe.between_time('03:45', '10:00')
+
                     if state.replay_data_ce.empty or state.replay_data_pe.empty:
-                        await websocket.send_json({"type": "error", "message": f"Option data not found for {state.ce_sym} or {state.pe_sym}"})
+                        await websocket.send_json({"type": "error", "message": f"Option data not found for {state.ce_sym} or {state.pe_sym} in market hours."})
                         return
 
                     state.replay_idx = 50
@@ -291,13 +308,12 @@ async def websocket_endpoint(websocket: WebSocket):
 def format_records(df):
     """Formats DataFrame for UI with Unix timestamps shifted to IST for presentation."""
     recs = df.copy().reset_index()
-    # If the index is naive, it is IST as returned by tvDatafeed for NSE.
-    # Localize to IST and convert to UTC for correct Unix timestamp.
+    # Data is already localized to UTC in DataManager.get_data
     if recs['datetime'].dt.tz is None:
         recs['datetime'] = recs['datetime'].dt.tz_localize('Asia/Kolkata').dt.tz_convert('UTC')
 
     # Add Unix timestamp in seconds.
-    # Shift by 5.5 hours (19800s) to force UI to show IST even if browser is in UTC.
+    # Shift by 5.5 hours (19800s) to force UI to show IST digits as UTC.
     recs['time'] = recs['datetime'].apply(lambda x: int(x.timestamp()) + 19800)
 
     # Keep ISO string for reference if needed
@@ -614,9 +630,9 @@ async def handle_live_update(websocket, state, update):
             volume_delta = 0
         state.last_total_volumes[symbol] = current_total_volume
 
-    now = int(datetime.now().timestamp())
+    now = int(datetime.now(timezone.utc).timestamp())
     interval_sec = 60
-    # Apply 5.5h shift for IST presentation
+    # Apply 5.5h shift for IST presentation (Force IST digits as UTC)
     candle_time = ((now + 19800) // interval_sec) * interval_sec
 
     if is_index: target_candle = state.last_idx_candle

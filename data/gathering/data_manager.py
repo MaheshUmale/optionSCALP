@@ -5,6 +5,8 @@ from tvDatafeed import Interval
 import math
 from datetime import datetime, timezone, timedelta
 
+IST_TZ = timezone(timedelta(hours=5, minutes=30))
+
 class DataManager:
     def __init__(self):
         self.feed = TvFeed()
@@ -15,9 +17,10 @@ class DataManager:
     def get_next_expiry(self, index="BANKNIFTY", reference_date=None):
         """Returns the next valid expiry date in YYMMDD format."""
         if reference_date is None:
-            reference_date = datetime.now()
+            reference_date = datetime.now(IST_TZ)
 
-        today_str = reference_date.strftime("%y%m%d")
+        # Ensure we use the date as per IST
+        today_str = reference_date.astimezone(IST_TZ).strftime("%y%m%d")
 
         # Based on NSE 2026 Expiry Metadata
         if "BANKNIFTY" in index:
@@ -60,8 +63,13 @@ class DataManager:
         except Exception as e:
             print(f"TvFeed fetch error for {clean_sym}: {e}")
 
-        if df is None or df.empty:
-            print(f"Error: Symbol {clean_sym} not found on TradingView. No data available.")
-            return pd.DataFrame()
+        if df is not None and not df.empty:
+            # Standardize index to UTC
+            if df.index.tz is None:
+                df.index = df.index.tz_localize('Asia/Kolkata').tz_convert('UTC')
+            else:
+                df.index = df.index.tz_convert('UTC')
+            return df
 
-        return df
+        print(f"Error: Symbol {clean_sym} not found on TradingView. No data available.")
+        return pd.DataFrame()
