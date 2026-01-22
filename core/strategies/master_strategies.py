@@ -14,7 +14,7 @@ def get_prev_day_close(df):
 
 class BBMeanReversionLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("BB_MEAN_REVERSION_LONG", symbol_type)
+        super().__init__("BB_MEAN_REVERSION_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -52,7 +52,7 @@ class BBMeanReversionLong(BaseStrategy):
 
 class BBMeanReversionShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("BB_MEAN_REVERSION_SHORT", symbol_type)
+        super().__init__("BB_MEAN_REVERSION_SHORT", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -90,7 +90,7 @@ class BBMeanReversionShort(BaseStrategy):
 
 class BigDogBreakoutLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("BIGDOG_BREAKOUT_LONG", symbol_type)
+        super().__init__("BIGDOG_BREAKOUT_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 20: return None
@@ -120,7 +120,7 @@ class BigDogBreakoutLong(BaseStrategy):
 
 class BigDogBreakoutShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("BIGDOG_BREAKOUT_SHORT", symbol_type)
+        super().__init__("BIGDOG_BREAKOUT_SHORT", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 20: return None
@@ -150,7 +150,7 @@ class BigDogBreakoutShort(BaseStrategy):
 
 class BRFShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("BRF_SHORT", symbol_type)
+        super().__init__("BRF_SHORT", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 10: return None
@@ -252,7 +252,7 @@ class IndexBreakoutLong(BaseStrategy):
 
 class RSIScalperLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("RSI_SCALPER_LONG", symbol_type)
+        super().__init__("RSI_SCALPER_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 15: return None
@@ -274,7 +274,7 @@ class RSIScalperLong(BaseStrategy):
 
 class RSIScalperShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("RSI_SCALPER_SHORT", symbol_type)
+        super().__init__("RSI_SCALPER_SHORT", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 15: return None
@@ -296,7 +296,7 @@ class RSIScalperShort(BaseStrategy):
 
 class SnapReversalLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("SNAP_REVERSAL_LONG", symbol_type)
+        super().__init__("SNAP_REVERSAL_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -322,7 +322,7 @@ class SnapReversalLong(BaseStrategy):
 
 class SnapReversalShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("SNAP_REVERSAL_SHORT", symbol_type)
+        super().__init__("SNAP_REVERSAL_SHORT", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -478,7 +478,7 @@ class ScreenerMomentumLong(BaseStrategy):
 
 class VolumeSpikeScalperLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("VOLUME_SPIKE_SCALPER_LONG", symbol_type)
+        super().__init__("VOLUME_SPIKE_SCALPER_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -500,7 +500,7 @@ class VolumeSpikeScalperLong(BaseStrategy):
 
 class VWAPEMAGateLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("VWAP_EMA_GATE_LONG", symbol_type)
+        super().__init__("VWAP_EMA_GATE_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -518,7 +518,7 @@ class VWAPEMAGateLong(BaseStrategy):
 
 class VWAPEMAGateShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("VWAP_EMA_GATE_SHORT", symbol_type)
+        super().__init__("VWAP_EMA_GATE_SHORT", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -536,7 +536,7 @@ class VWAPEMAGateShort(BaseStrategy):
 
 class OptionBuyTest(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("OPTION_BUY_TEST", symbol_type)
+        super().__init__("OPTION_BUY_TEST", symbol_type, is_index_driven=False)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 2: return None

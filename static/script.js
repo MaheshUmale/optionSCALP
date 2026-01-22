@@ -163,8 +163,14 @@ ws.onmessage = (event) => {
             }
         }
 
-        if (data.ce_symbol) document.getElementById('ce-label').innerText = `CE OPTION: ${data.ce_symbol}`;
-        if (data.pe_symbol) document.getElementById('pe-label').innerText = `PE OPTION: ${data.pe_symbol}`;
+        if (data.ce_symbol) {
+            document.getElementById('ce-label').querySelector('span').innerText = `CE OPTION: ${data.ce_symbol}`;
+            document.getElementById('ce-popout').href = `/chart?symbol=${data.ce_symbol}`;
+        }
+        if (data.pe_symbol) {
+            document.getElementById('pe-label').querySelector('span').innerText = `PE OPTION: ${data.pe_symbol}`;
+            document.getElementById('pe-popout').href = `/chart?symbol=${data.pe_symbol}`;
+        }
         if (data.new_signals) {
             data.new_signals.forEach(sig => updateSignal(sig));
         }
@@ -214,6 +220,9 @@ ws.onmessage = (event) => {
 
 function updateSignal(sig) {
     const list = document.getElementById('signals-list');
+    if (list.style.display === 'none') {
+        // Auto-show if new signal comes? Or just pulse the header?
+    }
     const div = document.createElement('div');
     div.className = 'signal-item';
     const strat = sig.strat_name || "STRATEGY";

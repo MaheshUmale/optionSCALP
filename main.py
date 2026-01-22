@@ -89,6 +89,10 @@ async def get_live(request: Request):
 async def get_replay(request: Request):
     return templates.TemplateResponse("replay.html", {"request": request})
 
+@app.get("/chart", response_class=HTMLResponse)
+async def get_chart(request: Request):
+    return templates.TemplateResponse("chart.html", {"request": request})
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -542,8 +546,7 @@ async def send_replay_step(websocket, state):
 
         # A. Index-driven strategies
         for strat in state.strategies["INDEX"]:
-            is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
-            if is_index_driven:
+            if strat.is_index_driven or any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
                 setup = strat.check_setup(sub_idx, state.pcr_insights)
                 if setup:
                     s_type = setup.get('type', '').upper()
@@ -575,8 +578,7 @@ async def send_replay_step(websocket, state):
             ("PE", state.pe_sym, sub_pe, state.pe_markers, state.strategies["PE"], pe_recs)
         ]:
             for strat in strat_list:
-                is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
-                if not is_index_driven:
+                if not strat.is_index_driven and not any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
                     setup = strat.check_setup(df, state.pcr_insights)
                     if setup:
                         s_type = setup.get('type', '').upper()
@@ -874,8 +876,7 @@ async def handle_live_update(websocket, state, update):
                 # A. Option-driven
                 strats_to_check = state.strategies["CE"] if is_ce else state.strategies["PE"]
                 for strat in strats_to_check:
-                    is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
-                    if not is_index_driven:
+                    if not strat.is_index_driven and not any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
                         try:
                             setup = strat.check_setup(ce_df if is_ce else pe_df, state.pcr_insights)
                             if setup:
@@ -887,9 +888,14 @@ async def handle_live_update(websocket, state, update):
                 # B. Index-driven (on CE close to avoid duplicates)
                 if is_ce:
                     for strat in state.strategies["INDEX"]:
-                        if any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
-                            setup = strat.check_setup(idx_df, state.pcr_insights)
-                            if setup: await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
+                        if strat.is_index_driven or any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
+                            try:
+                                setup = strat.check_setup(idx_df, state.pcr_insights)
+                                if setup:
+                                    logger.info(f"INDEX SIGNAL TRIGGERED: {strat.name}")
+                                    await handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target_candle)
+                            except Exception as e:
+                                logger.error(f"Error in index strategy {strat.name}: {e}")
 
                 # C. Trend Following
                 tf_strat = state.tf_strategies["CE" if is_ce else "PE"]
