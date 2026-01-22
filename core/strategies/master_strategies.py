@@ -179,7 +179,7 @@ class BRFShort(BaseStrategy):
 
 class BRFReversalShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("BRF_REVERSAL_SHORT", symbol_type)
+        super().__init__("BRF_REVERSAL_SHORT", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 5: return None
@@ -206,7 +206,7 @@ class BRFReversalShort(BaseStrategy):
 
 class GapFillLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("GAP_FILL_LONG", symbol_type)
+        super().__init__("GAP_FILL_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 5: return None
@@ -233,7 +233,7 @@ class GapFillLong(BaseStrategy):
 
 class IndexBreakoutLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("INDEX_BREAKOUT_LONG", symbol_type)
+        super().__init__("INDEX_BREAKOUT_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -347,7 +347,7 @@ class SnapReversalShort(BaseStrategy):
 
 class SmartTrendIndexLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("SMART_TREND_INDEX_LONG", symbol_type)
+        super().__init__("SMART_TREND_INDEX_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -365,7 +365,7 @@ class SmartTrendIndexLong(BaseStrategy):
 
 class SmartTrendIndexShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("SMART_TREND_INDEX_SHORT", symbol_type)
+        super().__init__("SMART_TREND_INDEX_SHORT", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -383,7 +383,7 @@ class SmartTrendIndexShort(BaseStrategy):
 
 class InstitutionalDemandLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("INSTITUTIONAL_DEMAND_LONG", symbol_type)
+        super().__init__("INSTITUTIONAL_DEMAND_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 51: return None
@@ -412,7 +412,7 @@ class InstitutionalDemandLong(BaseStrategy):
 
 class RoundLevelRejectionShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("ROUND_LEVEL_REJECTION_SHORT", symbol_type)
+        super().__init__("ROUND_LEVEL_REJECTION_SHORT", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 2: return None
@@ -434,7 +434,7 @@ class RoundLevelRejectionShort(BaseStrategy):
 
 class SampleTrendReversalShort(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("SAMPLE_TREND_REVERSAL", symbol_type)
+        super().__init__("SAMPLE_TREND_REVERSAL", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None
@@ -455,7 +455,7 @@ class SampleTrendReversalShort(BaseStrategy):
 
 class ScreenerMomentumLong(BaseStrategy):
     def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("SCREENER_MOMENTUM_LONG", symbol_type)
+        super().__init__("SCREENER_MOMENTUM_LONG", symbol_type, is_index_driven=True)
 
     def check_setup(self, df, pcr_insights=None):
         if df is None or len(df) < 21: return None

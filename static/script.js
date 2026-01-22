@@ -100,6 +100,11 @@ function initCharts() {
 ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
 
+    if (data.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+        return;
+    }
+
     if (data.type === 'replay_info') {
         const slider = document.getElementById('replay-slider');
         slider.max = data.max_idx;
