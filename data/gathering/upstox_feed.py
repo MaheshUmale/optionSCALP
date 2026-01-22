@@ -59,6 +59,13 @@ class UpstoxLiveFeed:
                     if total_volume is not None:
                         total_volume = float(total_volume)
 
+                    # Use timestamp from feed if available (in milliseconds)
+                    ts_ms = market_ff.get("ltt") or market_ff.get("ts")
+                    if ts_ms:
+                        ts = float(ts_ms) / 1000
+                    else:
+                        ts = datetime.now().timestamp()
+
                     display_symbol = self.key_to_symbol.get(key, key)
 
                     update = {
@@ -66,7 +73,7 @@ class UpstoxLiveFeed:
                         "instrument_key": key,
                         "price": ltp,
                         "volume": total_volume,
-                        "timestamp": datetime.now().timestamp(),
+                        "timestamp": ts,
                         "oi": market_ff.get("oi"),
                         "iv": market_ff.get("iv"),
                         "ohlc": i1_candle
@@ -125,4 +132,7 @@ class UpstoxLiveFeed:
                 new_keys.append(key)
 
         if self.is_running and self.streamer and new_keys:
-            self.streamer.subscribe(new_keys, "full")
+            try:
+                self.streamer.subscribe(new_keys, "full")
+            except Exception as e:
+                logger.error(f"[UpstoxLiveFeed] Subscription error: {e}")

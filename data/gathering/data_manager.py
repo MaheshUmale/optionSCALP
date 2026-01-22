@@ -19,6 +19,10 @@ class DataManager:
         self.feed = TvFeed()
         self.db = DatabaseManager()
         self._instrument_df = None
+        self.upstox_client = None
+
+    def set_upstox_client(self, client):
+        self.upstox_client = client
 
     def get_atm_strike(self, spot_price, step=100):
         return int(round(spot_price / step) * step)
@@ -173,8 +177,46 @@ class DataManager:
         return None
 
     def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100, reference_date=None):
+        print(f"DataManager.get_data called for {symbol} (n_bars={n_bars})")
         # Clean symbol if needed (e.g. remove NSE: prefix for inner searches)
         clean_sym = symbol.replace("NSE:", "")
+        int_str = str(interval)
+
+        # 1. Try DB first
+        df_db = self.db.get_ohlcv(clean_sym, int_str)
+        if not df_db.empty and len(df_db) >= n_bars:
+            print(f"Returning {len(df_db)} bars from cache for {clean_sym}")
+            return df_db.tail(n_bars)
+
+        df = None
+
+        # 2. Try Upstox if enabled
+        if self.upstox_client:
+            try:
+                inst_key = self.get_upstox_key_for_tv_symbol(symbol)
+                if inst_key:
+                    # Map TV interval to Upstox interval string
+                    u_interval = "1m" if "1" in int_str else "5m"
+                    print(f"Attempting Upstox fetch for {clean_sym} ({inst_key})")
+                    res = self.upstox_client.get_intra_day_candle_data(inst_key, u_interval)
+                    if res and res.status == 'success' and res.data and res.data.candles:
+                        # Upstox candles: [timestamp, open, high, low, close, volume, oi]
+                        candles = res.data.candles
+                        df_u = pd.DataFrame(candles, columns=['datetime', 'open', 'high', 'low', 'close', 'volume', 'oi'])
+                        df_u['datetime'] = pd.to_datetime(df_u['datetime'])
+                        df_u.set_index('datetime', inplace=True)
+                        df_u = df_u.sort_index()
+                        df = df_u
+                        print(f"Successfully fetched {len(df)} bars from Upstox")
+            except Exception as e:
+                print(f"Upstox fetch error for {clean_sym}: {e}")
+
+        if df is None or df.empty:
+            try:
+                # Fallback to TradingView
+                df = self.feed.get_historical_data(clean_sym, exchange="NSE", interval=interval, n_bars=n_bars)
+            except Exception as e:
+                print(f"TvFeed fetch error for {clean_sym}: {e}")
         int_str = str(interval)
 
         # Try DB first
@@ -190,6 +232,7 @@ class DataManager:
             print(f"TvFeed fetch error for {clean_sym}: {e}")
 
         if df is not None and not df.empty:
+            print(f"Successfully fetched {len(df)} bars for {clean_sym} from TvFeed")
             # Standardize index to UTC
             if df.index.tz is None:
                 df.index = df.index.tz_localize('Asia/Kolkata').tz_convert('UTC')
