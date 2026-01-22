@@ -5,6 +5,12 @@ from data.database import DatabaseManager
 from tvDatafeed import Interval
 import math
 from datetime import datetime, timezone, timedelta
+import requests
+import gzip
+import io
+import os
+import json
+import re
 
 IST_TZ = timezone(timedelta(hours=5, minutes=30))
 
@@ -12,6 +18,7 @@ class DataManager:
     def __init__(self):
         self.feed = TvFeed()
         self.db = DatabaseManager()
+        self._instrument_df = None
 
     def get_atm_strike(self, spot_price, step=100):
         return int(round(spot_price / step) * step)
@@ -53,6 +60,117 @@ class DataManager:
         sym = f"{index}{expiry}{type_code}{int(strike)}"
         print(f"Generated option symbol for TV: {sym}")
         return sym
+
+    def get_upstox_instruments_df(self):
+        if self._instrument_df is not None:
+            return self._instrument_df
+
+        url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
+        try:
+            response = requests.get(url, timeout=30)
+            with gzip.GzipFile(fileobj=io.BytesIO(response.content)) as f:
+                self._instrument_df = pd.read_json(f)
+            return self._instrument_df
+        except Exception as e:
+            print(f"Error downloading Upstox instruments: {e}")
+            return pd.DataFrame()
+
+    def get_upstox_instrument_keys(self, symbols=["NIFTY", "BANKNIFTY"], spot_prices={"NIFTY": 0, "BANKNIFTY": 0}):
+        df = self.get_upstox_instruments_df()
+        if df.empty: return {}
+
+        full_mapping = {}
+        for symbol in symbols:
+            spot = spot_prices.get(symbol)
+            if not spot: continue
+
+            # --- 1. Current Month Future ---
+            fut_df = df[(df['name'] == symbol) & (df['instrument_type'] == 'FUT')].sort_values(by='expiry')
+            if fut_df.empty: continue
+            current_fut_key = fut_df.iloc[0]['instrument_key']
+
+            # --- 2. Nearest Expiry Options ---
+            opt_df = df[(df['name'] == symbol) & (df['instrument_type'].isin(['CE', 'PE']))].copy()
+            if opt_df.empty: continue
+
+            # Robust date parsing: handle both numeric and string
+            opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
+            # If all are NaT, they might be unix timestamps in ms
+            if opt_df['expiry_dt'].isna().all():
+                opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], origin='unix', unit='ms', errors='coerce')
+
+            nearest_expiry = opt_df['expiry_dt'].min()
+            near_opt_df = opt_df[opt_df['expiry_dt'] == nearest_expiry]
+
+            # --- 3. Identify Strikes (ATM +/- 5) ---
+            unique_strikes = sorted(near_opt_df['strike_price'].unique())
+            atm_strike = min(unique_strikes, key=lambda x: abs(x - spot))
+            atm_index = unique_strikes.index(atm_strike)
+
+            start_idx = max(0, atm_index - 5)
+            end_idx = min(len(unique_strikes), atm_index + 6)
+            selected_strikes = unique_strikes[start_idx : end_idx]
+
+            # --- 4. Build Result ---
+            option_keys = []
+            for strike in selected_strikes:
+                ce_row = near_opt_df[(near_opt_df['strike_price'] == strike) & (near_opt_df['instrument_type'] == 'CE')]
+                pe_row = near_opt_df[(near_opt_df['strike_price'] == strike) & (near_opt_df['instrument_type'] == 'PE')]
+
+                if ce_row.empty or pe_row.empty: continue
+
+                option_keys.append({
+                    "strike": strike,
+                    "ce": ce_row.iloc[0]['instrument_key'],
+                    "ce_trading_symbol": ce_row.iloc[0]['trading_symbol'],
+                    "pe": pe_row.iloc[0]['instrument_key'],
+                    "pe_trading_symbol": pe_row.iloc[0]['trading_symbol']
+                })
+
+            full_mapping[symbol] = {
+                "future": current_fut_key,
+                "expiry": nearest_expiry.strftime('%Y-%m-%d') if pd.notnull(nearest_expiry) else None,
+                "options": option_keys,
+                "all_keys": [current_fut_key] + [opt['ce'] for opt in option_keys] + [opt['pe'] for opt in option_keys]
+            }
+        return full_mapping
+
+    def get_upstox_key_for_tv_symbol(self, tv_symbol):
+        """
+        Maps a TradingView symbol like 'NSE:NIFTY260127C25250' to Upstox instrument key.
+        """
+        df = self.get_upstox_instruments_df()
+        if df.empty: return None
+
+        if tv_symbol in ["NSE:NIFTY", "NIFTY"]: return "NSE_INDEX|Nifty 50"
+        if tv_symbol in ["NSE:BANKNIFTY", "BANKNIFTY"]: return "NSE_INDEX|Nifty Bank"
+
+        clean_sym = tv_symbol.replace("NSE:", "")
+        match = re.match(r"([A-Z]+)(\d{6})([CP])(\d+)", clean_sym)
+        if match:
+            name, expiry_short, opt_type, strike = match.groups()
+            strike = float(strike)
+            upstox_type = 'CE' if opt_type == 'C' else 'PE'
+
+            opt_df = df[(df['name'] == name) &
+                        (df['instrument_type'] == upstox_type) &
+                        (df['strike_price'] == strike)].copy()
+
+            if not opt_df.empty:
+                # Filter by expiry_short (YYMMDD)
+                opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
+                if opt_df['expiry_dt'].isna().all():
+                    opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], origin='unix', unit='ms', errors='coerce')
+
+                # Convert to YYMMDD for matching
+                opt_df['expiry_short'] = opt_df['expiry_dt'].dt.strftime('%y%m%d')
+                res = opt_df[opt_df['expiry_short'] == expiry_short]
+
+                if not res.empty:
+                    return res.iloc[0]['instrument_key']
+                return opt_df.iloc[0]['instrument_key'] # Fallback to first found if expiry doesn't match perfectly
+
+        return None
 
     def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100, reference_date=None):
         # Clean symbol if needed (e.g. remove NSE: prefix for inner searches)

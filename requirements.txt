@@ -5,3 +5,7 @@ pandas
 numpy
 git+https://github.com/rongardF/tvdatafeed.git
 jinja2
+pandas_ta
+websocket-client
+httpx
+upstox-python-sdk

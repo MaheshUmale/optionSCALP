@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 from data.gathering.data_manager import DataManager
 from data.gathering.live_feed import TradingViewLiveFeed
+from data.gathering.upstox_feed import UpstoxLiveFeed
+from data.gathering.upstoxAPIAccess import UpstoxClient
+import config
 from data.database import DatabaseManager
 from core.strategies.trend_following import TrendFollowingStrategy
 from core.strategies.master_strategies import STRATEGIES
@@ -76,6 +79,7 @@ class SessionState:
         self.pe_history = []
         self.last_total_volumes = {} # Track cumulative volumes to calculate deltas
         self.pcr_insights = None
+        self.upstox_client = None
 
 @app.get("/", response_class=HTMLResponse)
 async def get_live(request: Request):
@@ -195,17 +199,63 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     if state.live_feed: state.live_feed.stop()
                     loop = asyncio.get_running_loop()
-                    state.live_feed = TradingViewLiveFeed(lambda u: asyncio.run_coroutine_threadsafe(handle_live_update(websocket, state, u), loop))
 
-                    symbols = [f"NSE:{index_sym}", f"NSE:{state.ce_sym}", f"NSE:{state.pe_sym}"]
-                    # Add some surrounding strikes for readiness
-                    step = 100 if "BANK" in index_sym else 50
-                    for offset in [-100, 100]:
-                        for ot in ["C", "P"]:
-                            symbols.append(f"NSE:{dm.get_option_symbol(index_sym, strike + offset, ot)}")
+                    # Check if Upstox is configured
+                    use_upstox = hasattr(config, 'ACCESS_TOKEN') and config.ACCESS_TOKEN != "YOUR_ACCESS_TOKEN"
 
-                    state.live_feed.start()
-                    state.live_feed.add_symbols(list(set(symbols)))
+                    if use_upstox:
+                        logger.info("Using Upstox for Live Feed")
+                        state.live_feed = UpstoxLiveFeed(config.ACCESS_TOKEN, lambda u: asyncio.run_coroutine_threadsafe(handle_live_update(websocket, state, u), loop))
+                        state.upstox_client = UpstoxClient(config.ACCESS_TOKEN)
+
+                        # Use Upstox specific mapping
+                        spot_prices = {index_sym: idx_df['close'].iloc[-1]}
+                        upstox_mapping = dm.get_upstox_instrument_keys([index_sym], spot_prices)
+
+                        if index_sym in upstox_mapping:
+                            mapping = upstox_mapping[index_sym]
+                            all_keys = mapping['all_keys']
+                            # Add Index keys
+                            all_keys.append("NSE_INDEX|Nifty 50")
+                            all_keys.append("NSE_INDEX|Nifty Bank")
+
+                            symbols_with_keys = []
+                            for k in all_keys:
+                                # We need to map these back to TV symbols for the UI/Strategy
+                                if k == "NSE_INDEX|Nifty 50": sym = "NSE:NIFTY"
+                                elif k == "NSE_INDEX|Nifty Bank": sym = "NSE:BANKNIFTY"
+                                else:
+                                    # For options, we might need a better way to find the TV symbol
+                                    # but for the main CE/PE it's already in state
+                                    sym = k # Default to key if unknown
+                                    if k == mapping.get('future'): sym = f"NSE:{index_sym}" # Close enough
+
+                                    # Check main options
+                                    for opt in mapping.get('options', []):
+                                        if k == opt['ce']:
+                                            # Re-generate TV symbol for this strike
+                                            sym = f"NSE:{dm.get_option_symbol(index_sym, opt['strike'], 'C')}"
+                                        elif k == opt['pe']:
+                                            sym = f"NSE:{dm.get_option_symbol(index_sym, opt['strike'], 'P')}"
+
+                                symbols_with_keys.append({"symbol": sym, "key": k})
+
+                            state.live_feed.start()
+                            state.live_feed.add_symbols(symbols_with_keys)
+                        else:
+                            logger.error("Failed to get Upstox instrument keys, falling back to TradingView")
+                            use_upstox = False
+
+                    if not use_upstox:
+                        logger.info("Using TradingView for Live Feed")
+                        state.live_feed = TradingViewLiveFeed(lambda u: asyncio.run_coroutine_threadsafe(handle_live_update(websocket, state, u), loop))
+                        symbols = [f"NSE:{index_sym}", f"NSE:{state.ce_sym}", f"NSE:{state.pe_sym}"]
+                        step = 100 if "BANK" in index_sym else 50
+                        for offset in [-100, 100]:
+                            for ot in ["C", "P"]:
+                                symbols.append(f"NSE:{dm.get_option_symbol(index_sym, strike + offset, ot)}")
+                        state.live_feed.start()
+                        state.live_feed.add_symbols(list(set(symbols)))
 
                 elif data['type'] == 'start_replay':
                     logger.info(f"Starting replay for {data['index']} at {data.get('date', 'now')}")
@@ -853,10 +903,28 @@ async def handle_live_update(websocket, state, update):
             state.pcr_insights = pcr_res.get('insights', {})
             state.buildup_history = pcr_res.get('buildup_list', [])
 
+            # Option Chain handling if Upstox is enabled
+            option_chain_data = None
+            if state.upstox_client:
+                try:
+                    # Get next expiry for Upstox
+                    spot_prices = {clean_symbol: update['price']}
+                    upstox_mapping = dm.get_upstox_instrument_keys([clean_symbol], spot_prices)
+                    if clean_symbol in upstox_mapping:
+                        expiry_date = upstox_mapping[clean_symbol]['expiry']
+                        instrument_key = dm.get_upstox_key_for_tv_symbol(symbol)
+                        if instrument_key:
+                            option_chain_res = state.upstox_client.get_put_call_option_chain(instrument_key, expiry_date)
+                            if option_chain_res and option_chain_res.status == 'success':
+                                option_chain_data = option_chain_res.data
+                except Exception as e:
+                    logger.error(f"Error fetching Upstox Option Chain: {e}")
+
             await websocket.send_json(clean_json({
                 "type": "delta_signals",
                 "delta_signals": delta_signals,
                 "pcr_insights": state.pcr_insights,
+                "option_chain": option_chain_data,
                 "trend": state.tf_main.get_trend(pd.DataFrame(state.idx_history), state.pcr_insights) if state.idx_history else None
             }))
     else:
