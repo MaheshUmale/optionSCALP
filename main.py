@@ -892,10 +892,9 @@ async def handle_live_update(websocket, state, update):
         u_ohlc = update['ohlc']
         u_ts = (int(u_ohlc.get('ts', 0)) // 1000) + 19800
 
-        # Search in history for the matching completed candle
+        # Update history with finalized broker data
         history = state.idx_history if is_index else (state.ce_history if is_ce else state.pe_history)
-        found_hist = False
-        for h_candle in reversed(history[-10:]):
+        for h_candle in reversed(history[-5:]): # Check last few candles
             if h_candle['time'] == u_ts:
                 h_candle['open'] = u_ohlc.get('open', h_candle['open'])
                 h_candle['high'] = u_ohlc.get('high', h_candle['high'])
@@ -903,20 +902,19 @@ async def handle_live_update(websocket, state, update):
                 h_candle['close'] = u_ohlc.get('close', h_candle['close'])
                 if u_ohlc.get('volume'): h_candle['volume'] = float(u_ohlc['volume'])
                 db.store_ohlcv(clean_symbol, "Interval.in_1_minute", pd.DataFrame([h_candle]))
-                found_hist = True
+                # NOTE: We don't broadcast history_data on every tick to avoid UI lag.
+                # Corrections will be synced on next candle close or via regular updates.
                 break
-
-        if found_hist:
-            # Refresh historical series on UI (update() doesn't support middle-of-series)
-            await websocket.send_json(clean_json({
-                "type": "history_data", "symbol": update['symbol'],
-                "data": history, # Full corrected history
-                "is_index": is_index, "is_ce": is_ce, "is_pe": is_pe
-            }))
 
     if target_candle is None or candle_time > target_candle['time']:
         # Save finished candle to history before starting new one
         if target_candle is not None:
+            # Final broadcast of the closed candle for UI accuracy
+            await websocket.send_json(clean_json({
+                "type": "live_update", "symbol": update['symbol'], "candle": target_candle,
+                "is_index": is_index, "is_ce": is_ce, "is_pe": is_pe
+            }))
+
             # Store completed candle in DB
             db.store_ohlcv(clean_symbol, "Interval.in_1_minute", pd.DataFrame([target_candle]))
 
