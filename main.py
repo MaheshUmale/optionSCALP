@@ -248,20 +248,20 @@ async def websocket_endpoint(websocket: WebSocket):
                         if index_sym in upstox_mapping:
                             mapping = upstox_mapping[index_sym]
                             all_keys = mapping['all_keys']
-                            # Add Index keys
-                            all_keys.append("NSE_INDEX|Nifty 50")
-                            all_keys.append("NSE_INDEX|Nifty Bank")
+                            # Add relevant Index Spot key
+                            if index_sym == "NIFTY": all_keys.append("NSE_INDEX|Nifty 50")
+                            elif index_sym == "BANKNIFTY": all_keys.append("NSE_INDEX|Nifty Bank")
                             
                             symbols_with_keys = []
-                            for k in all_keys:
+                            for k in list(set(all_keys)):
                                 # We need to map these back to TV symbols for the UI/Strategy
                                 if k == "NSE_INDEX|Nifty 50": sym = "NSE:NIFTY"
                                 elif k == "NSE_INDEX|Nifty Bank": sym = "NSE:BANKNIFTY"
+                                elif k == mapping.get('future'): sym = f"NSE:{index_sym}-FUT"
                                 else:
                                     # For options, we might need a better way to find the TV symbol
                                     # but for the main CE/PE it's already in state
                                     sym = k # Default to key if unknown
-                                    if k == mapping.get('future'): sym = f"NSE:{index_sym}-FUT" # Avoid collision with Spot
                                     
                                     # Check main options
                                     for opt in mapping.get('options', []):

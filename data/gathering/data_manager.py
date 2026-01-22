@@ -152,6 +152,13 @@ class DataManager:
         if tv_symbol in ["NSE:NIFTY", "NIFTY"]: return "NSE_INDEX|Nifty 50"
         if tv_symbol in ["NSE:BANKNIFTY", "BANKNIFTY"]: return "NSE_INDEX|Nifty Bank"
 
+        # Handle Futures
+        if "-FUT" in tv_symbol:
+            base = tv_symbol.replace("NSE:", "").replace("-FUT", "")
+            fut_df = df[(df["name"] == base) & (df["instrument_type"] == "FUT")].sort_values(by="expiry")
+            if not fut_df.empty:
+                return fut_df.iloc[0]["instrument_key"]
+
         clean_sym = tv_symbol.replace("NSE:", "")
         match = re.match(r"([A-Z]+)(\d{6})([CP])(\d+)", clean_sym)
         if match:
@@ -214,25 +221,6 @@ class DataManager:
             except Exception as e:
                 print(f"Upstox fetch error for {clean_sym}: {e}")
 
-        if df is None or df.empty:
-            try:
-                # Fallback to TradingView
-                df = self.feed.get_historical_data(clean_sym, exchange="NSE", interval=interval, n_bars=n_bars)
-            except Exception as e:
-                print(f"TvFeed fetch error for {clean_sym}: {e}")
-        int_str = str(interval)
-
-        # Try DB first
-        df_db = self.db.get_ohlcv(clean_sym, int_str)
-        if not df_db.empty and len(df_db) >= n_bars:
-            return df_db.tail(n_bars)
-
-        df = None
-        try:
-            # We try fetching with NSE exchange explicitly
-            df = self.feed.get_historical_data(clean_sym, exchange="NSE", interval=interval, n_bars=n_bars)
-        except Exception as e:
-            print(f"TvFeed fetch error for {clean_sym}: {e}")
 
         if df is not None and not df.empty:
             print(f"Successfully fetched {len(df)} bars for {clean_sym} from TvFeed")
