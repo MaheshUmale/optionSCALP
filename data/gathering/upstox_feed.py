@@ -2,7 +2,8 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime,timezone
+from datetime import datetime, timezone
 import upstox_client
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class UpstoxLiveFeed:
     def on_close(self, close_status_code, close_msg):
         logger.info(f"[UpstoxLiveFeed] Connection closed: {close_status_code} - {close_msg}")
 
+    
     def on_message(self, message):
         """
         Handles incoming market data messages.
@@ -52,7 +54,8 @@ class UpstoxLiveFeed:
                     target_ff = market_ff if market_ff is not None else index_ff
                     if target_ff is None: continue
 
-                    ltpc = target_ff.get("ltpc", {})
+                    ltpc = target_ff.get("ltpc", {}) 
+                    # printLTPC:", ltpc)
                     ltp = ltpc.get("ltp")
                     ltt = ltpc.get("ltt")
 
