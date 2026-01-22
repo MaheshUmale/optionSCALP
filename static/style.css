@@ -52,6 +52,18 @@ body {
     border-bottom: 1px solid #333;
     display: flex;
     justify-content: space-between;
+    align-items: center;
+}
+
+.popout-link {
+    text-decoration: none;
+    color: #2962ff;
+    font-size: 14px;
+    margin-left: 10px;
+}
+
+.popout-link:hover {
+    color: #448aff;
 }
 
 .chart-box {

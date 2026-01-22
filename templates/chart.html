@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>OptionScalp Pro - Single Chart</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; background: #0c0d10; overflow: hidden; }
+        #full-chart { width: 100vw; height: 100vh; }
+        .chart-info { position: absolute; top: 10px; left: 10px; z-index: 100; color: #d1d4dc; font-family: sans-serif; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div class="chart-info">
+        <h2 id="symbol-display">Loading...</h2>
+        <div id="price-info"></div>
+    </div>
+    <div id="full-chart"></div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const symbol = urlParams.get('symbol');
+        document.getElementById('symbol-display').innerText = symbol || "No Symbol";
+
+        let chart, series, volSeries;
+
+        function initChart() {
+            chart = LightweightCharts.createChart(document.getElementById('full-chart'), {
+                layout: { background: { type: 'solid', color: '#0c0d10' }, textColor: '#d1d4dc' },
+                grid: { vertLines: { color: '#1a1b22' }, horzLines: { color: '#1a1b22' } },
+                crosshair: { mode: 1 },
+                timeScale: {
+                    borderColor: '#2b2b3b',
+                    timeVisible: true,
+                    secondsVisible: false,
+                    rightOffset: 10
+                }
+            });
+
+            series = chart.addCandlestickSeries({
+                upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+                wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+            });
+
+            volSeries = chart.addHistogramSeries({
+                color: '#26a69a',
+                priceFormat: { type: 'volume' },
+                priceScaleId: '',
+                scaleMargins: { top: 0.8, bottom: 0 },
+            });
+
+            window.addEventListener('resize', () => {
+                chart.resize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        ws.onopen = () => {
+            if (symbol) {
+                // We might need a specific message to subscribe to just one symbol
+                // For now, we'll just listen to live_updates if they match
+            }
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'live_update' && data.symbol.includes(symbol)) {
+                series.update(data.candle);
+                volSeries.update({
+                    time: data.candle.time,
+                    value: data.candle.volume,
+                    color: data.candle.close >= data.candle.open ? '#26a69a' : '#ef5350'
+                });
+                document.getElementById('price-info').innerText = `LTP: ${data.candle.close.toFixed(2)}`;
+            }
+
+            // Handle historical data if needed
+            if ((data.type === 'live_data' || data.type === 'replay_step')) {
+                let relevantData = null;
+                if (data.ce_symbol === symbol || symbol.includes(data.ce_symbol)) relevantData = data.ce_data;
+                else if (data.pe_symbol === symbol || symbol.includes(data.pe_symbol)) relevantData = data.pe_data;
+                else if (data.index_symbol === symbol || symbol.includes(data.index_symbol)) relevantData = data.index_data;
+
+                if (relevantData) {
+                    series.setData(relevantData.map(d => ({
+                        time: d.time, open: d.open, high: d.high, low: d.low, close: d.close
+                    })));
+                    volSeries.setData(relevantData.map(d => ({
+                        time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
+                    })));
+                }
+            }
+        };
+
+        initChart();
+    </script>
+</body>
+</html>
