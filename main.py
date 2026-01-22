@@ -206,8 +206,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         # Use shifted timestamp for markers
                         c_time = ce_recs[i]['time']
 
-                        # Run unified strategy processor
-                        h_signals = evaluate_all_strategies(state, sub_idx, sub_ce, sub_pe, last_time, c_time)
+                        # In warmup, we check for exits too to keep state clean
+                        check_trade_exits(state, sub_idx, sub_ce, sub_pe)
+
+                        # Run unified strategy processor (warmup mode)
+                        # Warmup mode records trades in memory to track state/cooldown but avoids DB spam
+                        h_signals = evaluate_all_strategies(state, sub_idx, sub_ce, sub_pe, last_time, c_time, record_trades=True, store_db=False)
 
                         for sig in h_signals:
                             color = "#2196F3" if sig['strat_name'] == "TREND_FOLLOWING" else "#FF9800"
@@ -839,7 +843,7 @@ async def fetch_trendlyne_signals(index_sym, atm_strike):
         logger.error(f"Error fetching Trendlyne signals: {e}")
         return None
 
-def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time):
+def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time, record_trades=True, store_db=True):
     """
     Unified strategy processor for both Live and Replay.
     Returns a list of signals triggered.
@@ -871,7 +875,7 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time)
                     setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
                     setup['is_pe'] = is_pe_trade
 
-                    if handle_new_trade(state, strat.name, target_sym, setup, candle_time):
+                    if handle_new_trade(state, strat.name, target_sym, setup, candle_time, store=record_trades, store_db=store_db):
                         new_signals.append(setup)
 
     # B. Option-driven strategies
@@ -895,7 +899,7 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time)
                     setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
                     setup['is_pe'] = (side == "PE")
 
-                    if handle_new_trade(state, strat.name, sym, setup, candle_time):
+                    if handle_new_trade(state, strat.name, sym, setup, candle_time, store=record_trades, store_db=store_db):
                         new_signals.append(setup)
 
         # Check Trend Following
@@ -910,7 +914,7 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time)
                 tf_setup['target'] = tf_setup.get('target') or (tf_setup['entry_price'] + sl_dist * 2)
                 tf_setup['is_pe'] = (side == "PE")
 
-                if handle_new_trade(state, tf_strat.name, sym, tf_setup, candle_time):
+                if handle_new_trade(state, tf_strat.name, sym, tf_setup, candle_time, store=record_trades, store_db=store_db):
                     new_signals.append(tf_setup)
 
     return new_signals
@@ -1157,7 +1161,7 @@ async def handle_live_update(websocket, state, update):
     }))
 
 
-def handle_new_trade(state, strategy_name, symbol, setup, time):
+def handle_new_trade(state, strategy_name, symbol, setup, time, store=True, store_db=True):
     # Check active trades
     for t in state.active_trades:
         if t.strategy_name == strategy_name and t.symbol == symbol:
@@ -1168,12 +1172,19 @@ def handle_new_trade(state, strategy_name, symbol, setup, time):
     if time - last_close < 300:
         return False
 
+    if not store:
+        # For warmup mode, we don't open real trades, but we still return True
+        # to show markers and potentially update cooldown if desired.
+        # Actually, let's keep it simple: warmup just shows markers and warms up strat.vars
+        return True
+
     # Since we only BUY options (Call for market-long, Put for market-short),
     # all trades are "LONG" on the option premium.
     t_type = 'LONG'
     trade = Trade(symbol, setup['entry_price'], time, t_type, strategy_name, sl=setup.get('sl'), target=setup.get('target'))
-    # Persist trade to DB
-    db.store_trade(trade)
+    # Persist trade to DB if requested
+    if store_db:
+        db.store_trade(trade)
     state.active_trades.append(trade)
     state.pnl_tracker.add_trade(trade)
     return True
