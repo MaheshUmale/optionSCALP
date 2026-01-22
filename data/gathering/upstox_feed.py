@@ -43,29 +43,38 @@ class UpstoxLiveFeed:
                 feeds = data.get("feeds", {})
                 for key, feed in feeds.items():
                     full_feed = feed.get("fullFeed", {})
-                    market_ff = full_feed.get("marketFF", {})
 
-                    ltpc = market_ff.get("ltpc", {})
-                    print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>LTPC:", ltpc)
+                    # Try Market Feed first (Options/Futures/Equities)
+                    market_ff = full_feed.get("marketFF")
+                    # Try Index Feed if marketFF is absent
+                    index_ff = full_feed.get("indexFF")
+
+                    target_ff = market_ff if market_ff is not None else index_ff
+                    if target_ff is None: continue
+
+                    ltpc = target_ff.get("ltpc", {})
                     ltp = ltpc.get("ltp")
                     ltt = ltpc.get("ltt")
 
-                    market_ohlc = market_ff.get("marketOHLC", {})
+                    market_ohlc = target_ff.get("marketOHLC", {})
                     ohlc_list = market_ohlc.get("ohlc", [])
 
                     # Find 1-minute candle (interval 'I1')
                     i1_candle = next((c for c in ohlc_list if c.get("interval") == "I1"), None)
 
-                    # volume from marketFF (vtt is volume traded today)
-                    total_volume = market_ff.get("vtt")
+                    # volume from marketFF (vtt is volume traded today), Index FF does not have volume
+                    total_volume = target_ff.get("vtt")
                     if total_volume is not None:
                         total_volume = float(total_volume)
+                    else:
+                        total_volume = 0.0
 
                     # Use feed timestamp for current tick time (more accurate for bucket alignment)
-                    ts_ms = market_ff.get("ts") or ltt
+                    ts_ms = target_ff.get("ts") or ltt
                     if ts_ms:
                         ts = float(ts_ms) / 1000
                     else:
+                        from datetime import timezone
                         ts = datetime.now(timezone.utc).timestamp()
 
                     display_symbol = self.key_to_symbol.get(key, key)
@@ -76,8 +85,8 @@ class UpstoxLiveFeed:
                         "price": ltp,
                         "volume": total_volume,
                         "timestamp": ts,
-                        "oi": market_ff.get("oi"),
-                        "iv": market_ff.get("iv"),
+                        "oi": target_ff.get("oi"),
+                        "iv": target_ff.get("iv"),
                         "ohlc": i1_candle
                     }
 
