@@ -47,6 +47,7 @@ class UpstoxLiveFeed:
 
                     ltpc = market_ff.get("ltpc", {})
                     ltp = ltpc.get("ltp")
+                    ltt = ltpc.get("ltt")
 
                     market_ohlc = market_ff.get("marketOHLC", {})
                     ohlc_list = market_ohlc.get("ohlc", [])
@@ -60,7 +61,8 @@ class UpstoxLiveFeed:
                         total_volume = float(total_volume)
 
                     # Use timestamp from feed if available (in milliseconds)
-                    ts_ms = market_ff.get("ltt") or market_ff.get("ts")
+                    # ltt is inside ltpc, ts is at root of marketFF
+                    ts_ms = ltt or market_ff.get("ts")
                     if ts_ms:
                         ts = float(ts_ms) / 1000
                     else:
