@@ -152,8 +152,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.last_total_volumes = {}
                     await websocket.send_json({"type": "reset_ui"})
 
-                    state.index_sym = data['index']
-                    index_sym = state.index_sym
+                    index_raw = data['index'].replace("NSE:", "")
+                    state.index_sym = f"NSE:{index_raw}"
+                    index_sym = index_raw # base symbol for DataManager
                     state.tf_main.update_params(index_sym)
                     for k in state.tf_strategies: state.tf_strategies[k].update_params(index_sym)
 
@@ -165,8 +166,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     strike = dm.get_atm_strike(idx_df['close'].iloc[-1], step=100 if "BANK" in index_sym else 50)
 
-                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C")
-                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P")
+                    state.ce_sym = f"NSE:{dm.get_option_symbol(index_sym, strike, 'C')}"
+                    state.pe_sym = f"NSE:{dm.get_option_symbol(index_sym, strike, 'P')}"
 
                     ce_df = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=300)
                     pe_df = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=300)
@@ -260,7 +261,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                     # For options, we might need a better way to find the TV symbol
                                     # but for the main CE/PE it's already in state
                                     sym = k # Default to key if unknown
-                                    if k == mapping.get('future'): sym = f"NSE:{index_sym}" # Close enough
+                                    if k == mapping.get('future'): sym = f"NSE:{index_sym}-FUT" # Avoid collision with Spot
                                     
                                     # Check main options
                                     for opt in mapping.get('options', []):
@@ -280,7 +281,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     if not use_upstox:
                         logger.info("Using TradingView for Live Feed")
                         live_feed = feed_manager.get_tv_feed()
-                        symbols = [f"NSE:{index_sym}", f"NSE:{state.ce_sym}", f"NSE:{state.pe_sym}"]
+                        # symbols in state already have NSE: prefix
+                        symbols = [state.index_sym, state.ce_sym, state.pe_sym]
                         step = 100 if "BANK" in index_sym else 50
                         for offset in [-100, 100]:
                             for ot in ["C", "P"]:
@@ -366,9 +368,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.replay_speed = float(data['speed'])
 
                 elif data['type'] == 'subscribe_symbol':
-                    sub_sym = data['symbol']
+                    sub_sym = f"NSE:{data['symbol'].replace('NSE:', '')}"
                     clean_sub_sym = sub_sym.replace("NSE:", "")
-                    state.subscribed_symbols.add(clean_sub_sym)
+                    state.subscribed_symbols.add(sub_sym) # Use prefixed for consistency
                     logger.info(f"Subscription requested for {sub_sym}")
                     feed_manager.subscribe(live_callback)
 
@@ -865,18 +867,22 @@ async def handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target
 
 async def handle_live_update(websocket, state, update):
     if websocket.client_state != WebSocketState.CONNECTED: return
-    symbol = update['symbol']
-    clean_symbol = symbol.replace("NSE:", "")
-    is_index = clean_symbol == state.index_sym
-    is_ce = clean_symbol == state.ce_sym
-    is_pe = clean_symbol == state.pe_sym
-    is_subscribed = clean_symbol in state.subscribed_symbols
+
+    # Normalize incoming symbol for matching
+    raw_symbol = update['symbol']
+    prefixed_symbol = f"NSE:{raw_symbol.replace('NSE:', '')}"
+    clean_symbol = prefixed_symbol.replace("NSE:", "")
+
+    is_index = prefixed_symbol == state.index_sym
+    is_ce = prefixed_symbol == state.ce_sym
+    is_pe = prefixed_symbol == state.pe_sym
+    is_subscribed = prefixed_symbol in state.subscribed_symbols
 
     if not (is_index or is_ce or is_pe or is_subscribed): return
 
     # Volume handling
     current_total_volume = update.get('volume')
-    last_total_volume = state.last_total_volumes.get(symbol)
+    last_total_volume = state.last_total_volumes.get(prefixed_symbol)
 
     volume_delta = 0
     if current_total_volume is not None:
@@ -885,7 +891,7 @@ async def handle_live_update(websocket, state, update):
         else:
             # First live tick for this symbol: initialize total volume but don't add to candle
             volume_delta = 0
-        state.last_total_volumes[symbol] = current_total_volume
+        state.last_total_volumes[prefixed_symbol] = current_total_volume
 
     # Use feed timestamp or fallback to current time
     now_ts = update.get('timestamp')
@@ -932,7 +938,7 @@ async def handle_live_update(websocket, state, update):
         if target_candle is not None:
             # Final broadcast of the closed candle for UI accuracy
             await websocket.send_json(clean_json({
-                "type": "live_update", "symbol": update['symbol'], "candle": target_candle,
+                "type": "live_update", "symbol": prefixed_symbol, "candle": target_candle,
                 "is_index": is_index, "is_ce": is_ce, "is_pe": is_pe
             }))
 
@@ -1073,7 +1079,7 @@ async def handle_live_update(websocket, state, update):
                  # target_candle['close'] remains LTP
 
     await websocket.send_json(clean_json({
-        "type": "live_update", "symbol": update['symbol'], "candle": target_candle,
+        "type": "live_update", "symbol": prefixed_symbol, "candle": target_candle,
         "is_index": is_index, "is_ce": is_ce, "is_pe": is_pe
     }))
 
