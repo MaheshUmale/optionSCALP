@@ -64,7 +64,7 @@ class DataManager:
     def get_upstox_instruments_df(self):
         if self._instrument_df is not None:
             return self._instrument_df
-
+        
         url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
         try:
             response = requests.get(url, timeout=30)
@@ -83,7 +83,7 @@ class DataManager:
         for symbol in symbols:
             spot = spot_prices.get(symbol)
             if not spot: continue
-
+            
             # --- 1. Current Month Future ---
             fut_df = df[(df['name'] == symbol) & (df['instrument_type'] == 'FUT')].sort_values(by='expiry')
             if fut_df.empty: continue
@@ -92,7 +92,7 @@ class DataManager:
             # --- 2. Nearest Expiry Options ---
             opt_df = df[(df['name'] == symbol) & (df['instrument_type'].isin(['CE', 'PE']))].copy()
             if opt_df.empty: continue
-
+            
             # Robust date parsing: handle both numeric and string
             opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
             # If all are NaT, they might be unix timestamps in ms
@@ -106,7 +106,7 @@ class DataManager:
             unique_strikes = sorted(near_opt_df['strike_price'].unique())
             atm_strike = min(unique_strikes, key=lambda x: abs(x - spot))
             atm_index = unique_strikes.index(atm_strike)
-
+            
             start_idx = max(0, atm_index - 5)
             end_idx = min(len(unique_strikes), atm_index + 6)
             selected_strikes = unique_strikes[start_idx : end_idx]
@@ -116,7 +116,7 @@ class DataManager:
             for strike in selected_strikes:
                 ce_row = near_opt_df[(near_opt_df['strike_price'] == strike) & (near_opt_df['instrument_type'] == 'CE')]
                 pe_row = near_opt_df[(near_opt_df['strike_price'] == strike) & (near_opt_df['instrument_type'] == 'PE')]
-
+                
                 if ce_row.empty or pe_row.empty: continue
 
                 option_keys.append({
@@ -151,21 +151,21 @@ class DataManager:
             name, expiry_short, opt_type, strike = match.groups()
             strike = float(strike)
             upstox_type = 'CE' if opt_type == 'C' else 'PE'
-
-            opt_df = df[(df['name'] == name) &
-                        (df['instrument_type'] == upstox_type) &
+            
+            opt_df = df[(df['name'] == name) & 
+                        (df['instrument_type'] == upstox_type) & 
                         (df['strike_price'] == strike)].copy()
-
+            
             if not opt_df.empty:
                 # Filter by expiry_short (YYMMDD)
                 opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
                 if opt_df['expiry_dt'].isna().all():
                     opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], origin='unix', unit='ms', errors='coerce')
-
+                
                 # Convert to YYMMDD for matching
                 opt_df['expiry_short'] = opt_df['expiry_dt'].dt.strftime('%y%m%d')
                 res = opt_df[opt_df['expiry_short'] == expiry_short]
-
+                
                 if not res.empty:
                     return res.iloc[0]['instrument_key']
                 return opt_df.iloc[0]['instrument_key'] # Fallback to first found if expiry doesn't match perfectly
