@@ -29,7 +29,7 @@
             chart = LightweightCharts.createChart(document.getElementById('full-chart'), {
                 layout: { background: { type: 'solid', color: '#0c0d10' }, textColor: '#d1d4dc' },
                 grid: { vertLines: { color: '#1a1b22' }, horzLines: { color: '#1a1b22' } },
-                crosshair: { mode: 1 },
+                crosshair: { mode: 0 },
                 timeScale: {
                     borderColor: '#2b2b3b',
                     timeVisible: true,
@@ -46,6 +46,7 @@
 
             chart.priceScale('right').applyOptions({
                 autoScale: true,
+                scaleMargins: { top: 0.1, bottom: 0.2 },
             });
 
             volSeries = chart.addHistogramSeries({

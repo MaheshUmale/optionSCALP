@@ -8,7 +8,7 @@ function initCharts() {
     const chartOptions = {
         layout: { background: { type: 'solid', color: '#0c0d10' }, textColor: '#d1d4dc' },
         grid: { vertLines: { color: '#1a1b22' }, horzLines: { color: '#1a1b22' } },
-        crosshair: { mode: 1 },
+        crosshair: { mode: 0 },
         timeScale: {
             borderColor: '#2b2b3b',
             timeVisible: true,
@@ -58,6 +58,7 @@ function initCharts() {
         c.priceScale('right').applyOptions({
             autoScale: true,
             borderVisible: false,
+            scaleMargins: { top: 0.1, bottom: 0.2 },
         });
     });
 
@@ -65,7 +66,7 @@ function initCharts() {
         color: '#26a69a',
         priceFormat: { type: 'volume' },
         priceScaleId: '',
-        scaleMargins: { top: 0.8, bottom: 0 },
+        scaleMargins: { top: 0.85, bottom: 0 },
     };
 
     idxVolSeries = idxChart.addHistogramSeries(volStyle);
@@ -114,6 +115,8 @@ function initCharts() {
 }
 
 ws.onmessage = (event) => {
+    // Log message for debugging
+    // console.log("Received:", data.type);
     const data = JSON.parse(event.data);
 
     if (data.type === 'ping') {
