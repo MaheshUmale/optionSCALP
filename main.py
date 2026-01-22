@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 from data.gathering.data_manager import DataManager
 from data.gathering.live_feed import TradingViewLiveFeed
+from data.database import DatabaseManager
 from core.strategies.trend_following import TrendFollowingStrategy
 from core.strategies.master_strategies import STRATEGIES
 from core.strategies.delta_volume_strategy import DeltaVolumeStrategy
@@ -32,6 +33,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 dm = DataManager()
+db = DatabaseManager()
 tl_client = TrendlyneClient()
 tl_adv = TrendlyneScalper()
 
@@ -305,6 +307,73 @@ async def websocket_endpoint(websocket: WebSocket):
         if state.live_feed:
             state.live_feed.stop()
 
+def is_within_trading_window(ts_utc):
+    """
+    Check if IST time is between 09:20 and 15:17.
+    """
+    if isinstance(ts_utc, (int, float)):
+        dt = datetime.fromtimestamp(ts_utc, tz=timezone.utc)
+    else:
+        dt = ts_utc
+
+    ist_dt = dt.astimezone(IST_TZ)
+    h, m = ist_dt.hour, ist_dt.minute
+    current_time = h * 60 + m
+
+    start_time = 9 * 60 + 20
+    end_time = 15 * 60 + 17
+
+    return start_time <= current_time <= end_time
+
+def is_market_closing(ts_utc):
+    """
+    Check if IST time is 15:20 or later.
+    """
+    if isinstance(ts_utc, (int, float)):
+        dt = datetime.fromtimestamp(ts_utc, tz=timezone.utc)
+    else:
+        dt = ts_utc
+
+    ist_dt = dt.astimezone(IST_TZ)
+    h, m = ist_dt.hour, ist_dt.minute
+    current_time = h * 60 + m
+
+    close_time = 15 * 60 + 20
+    return current_time >= close_time
+
+def check_option_ema_filter(option_df):
+    """
+    EMA filter on option price:
+    - price need to be above atleast one ema (9 or 14)
+    - 9 ema rising OR 9 ema above 14 ema
+    """
+    if option_df is None or len(option_df) < 15:
+        return False
+
+    try:
+        import pandas_ta as ta
+        # Calculate EMA 9 and 14
+        ema9 = ta.ema(option_df['close'], length=9)
+        ema14 = ta.ema(option_df['close'], length=14)
+
+        if ema9 is None or ema14 is None or pd.isna(ema9.iloc[-1]) or pd.isna(ema14.iloc[-1]):
+            return False
+
+        last_close = option_df['close'].iloc[-1]
+        last_ema9 = ema9.iloc[-1]
+        prev_ema9 = ema9.iloc[-2] if len(ema9) > 1 else last_ema9
+        last_ema14 = ema14.iloc[-1]
+
+        # price need to be above atleast one ema
+        above_ema = (last_close > last_ema9) or (last_close > last_ema14)
+        # 9 ema rising /or above 14 ema
+        ema_condition = (last_ema9 > prev_ema9) or (last_ema9 > last_ema14)
+
+        return above_ema and ema_condition
+    except Exception as e:
+        logger.error(f"EMA Filter error: {e}")
+        return False
+
 def format_records(df):
     """Formats DataFrame for UI with Unix timestamps shifted to IST for presentation."""
     recs = df.copy().reset_index()
@@ -398,6 +467,19 @@ async def send_replay_step(websocket, state):
         # 4. Check Active Trades
         check_trade_exits(state, sub_idx, sub_ce, sub_pe)
 
+        # EOD Square-off check
+        if is_market_closing(last_time):
+            for trade in state.active_trades[:]:
+                df = sub_ce if trade.symbol == state.ce_sym else (sub_pe if trade.symbol == state.pe_sym else sub_idx)
+                last_price = df['close'].iloc[-1]
+                last_time_shifted = int(df.index[-1].timestamp()) + 19800
+                trade.close(last_price, last_time_shifted, "EOD_SQUAREOFF")
+                db.store_trade(trade)
+                state.active_trades.remove(trade)
+
+        # Store PCR Insights for analysis
+        db.store_pcr_insight(state.index_sym.replace("NSE:", ""), int(last_time.timestamp()), state.pcr_insights, state.buildup_history)
+
         # 5. Format Records for Markers
         ce_recs = format_records(sub_ce)
         pe_recs = format_records(sub_pe)
@@ -426,6 +508,12 @@ async def send_replay_step(websocket, state):
                     setup['entry_price'] = setup.get('entry_price') or target_df['close'].iloc[-1]
                     setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
                     setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
+
+                    if not is_within_trading_window(last_time):
+                        continue
+
+                    if not check_option_ema_filter(target_df):
+                        continue
 
                     if handle_new_trade(state, strat.name, target_sym, setup, setup['time']):
                         new_signals.append(setup)
@@ -457,6 +545,12 @@ async def send_replay_step(websocket, state):
                         setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
                         setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
 
+                        if not is_within_trading_window(last_time):
+                            continue
+
+                        if not check_option_ema_filter(target_df):
+                            continue
+
                         if handle_new_trade(state, strat.name, target_sym, setup, setup['time']):
                             new_signals.append(setup)
                             target_markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
@@ -472,6 +566,13 @@ async def send_replay_step(websocket, state):
                 setup['entry_price'] = df['close'].iloc[-1]
                 setup['sl'] = setup['entry_price'] - sl_dist
                 setup['target'] = setup['entry_price'] + sl_dist * 2
+
+                if not is_within_trading_window(last_time):
+                    continue
+
+                if not check_option_ema_filter(df):
+                    continue
+
                 if handle_new_trade(state, tf_strat.name, sym, setup, setup['time']):
                     new_signals.append(setup)
                     markers.append({"time": setup['time'], "position": "belowBar", "color": "#2196F3", "shape": "arrowUp", "text": tf_strat.name})
@@ -682,6 +783,9 @@ async def handle_live_update(websocket, state, update):
     if target_candle is None or candle_time > target_candle['time']:
         # Save finished candle to history before starting new one
         if target_candle is not None:
+            # Store completed candle in DB
+            db.store_ohlcv(clean_symbol, "Interval.in_1_minute", pd.DataFrame([target_candle]))
+
             if is_index: state.idx_history.append(target_candle)
             elif is_ce: state.ce_history.append(target_candle)
             elif is_pe: state.pe_history.append(target_candle)
@@ -693,6 +797,17 @@ async def handle_live_update(websocket, state, update):
 
             # Check for strategy setup on closed candle (Unified & Segregated)
             if (is_ce or is_pe) and len(state.idx_history) > 20:
+                current_utc = datetime.now(timezone.utc)
+
+                # EOD Square-off check for live mode
+                if is_market_closing(current_utc):
+                    for trade in state.active_trades[:]:
+                        # Simplified for live
+                        trade.close(update['price'], candle_time, "EOD_SQUAREOFF")
+                        db.store_trade(trade)
+                        state.active_trades.remove(trade)
+                    return
+
                 idx_df = pd.DataFrame(state.idx_history)
                 ce_df = pd.DataFrame(state.ce_history)
                 pe_df = pd.DataFrame(state.pe_history)
@@ -771,6 +886,8 @@ def handle_new_trade(state, strategy_name, symbol, setup, time):
     # all trades are "LONG" on the option premium.
     t_type = 'LONG'
     trade = Trade(symbol, setup['entry_price'], time, t_type, strategy_name, sl=setup.get('sl'), target=setup.get('target'))
+    # Persist trade to DB
+    db.store_trade(trade)
     state.active_trades.append(trade)
     state.pnl_tracker.add_trade(trade)
     return True
@@ -800,6 +917,8 @@ def check_trade_exits(state, sub_idx, sub_ce, sub_pe):
 
         if closed:
             trade.close(exit_price, last_time, reason)
+            # Update trade in DB
+            db.store_trade(trade)
             state.last_trade_close_times[(trade.strategy_name, trade.symbol)] = last_time
             state.active_trades.remove(trade)
 
