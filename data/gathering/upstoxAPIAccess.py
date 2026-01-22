@@ -1,22 +1,23 @@
 import upstox_client
 from upstox_client.rest import ApiException
+import logging
+
+logger = logging.getLogger(__name__)
 
 class UpstoxClient:
     def __init__(self, access_token=None):
-          
+        self.api_client = None
         if access_token:
             self.configuration = upstox_client.Configuration()
             self.configuration.access_token = access_token
             self.api_client = upstox_client.ApiClient(self.configuration)
         else:
-            print("[UpstoxClient] Not initialized due to missing 'upstox_access_token' in config.json.")
+            logger.warning("[UpstoxClient] Not initialized due to missing access_token.")
      
     def get_historical_candle_data(self, instrument_key, interval, to_date, from_date):
         if not self.api_client: return None
         history_api = upstox_client.HistoryV3Api(self.api_client)
 
-        # More robust interval mapping
-        # If interval is already '1minute', '5minute' etc (from DataManager mapping)
         if 'minute' in interval:
             unit = 'minutes'
             value = interval.replace('minute', '')
@@ -42,13 +43,12 @@ class UpstoxClient:
                 from_date=from_date
             )
         except Exception as e:
-            print(f"[UpstoxClient] API Error in get_historical_candle_data: {e}")
+            logger.error(f"[UpstoxClient] API Error in get_historical_candle_data: {e}")
             return None
 
     def get_intra_day_candle_data(self, instrument_key, interval):
         if not self.api_client: return None
-        import upstox_client as upstox_sdk
-        history_api = upstox_sdk.HistoryV3Api(self.api_client)
+        history_api = upstox_client.HistoryV3Api(self.api_client)
 
         if 'minute' in interval:
             unit = 'minutes'
@@ -56,7 +56,7 @@ class UpstoxClient:
         elif 'm' in interval:
             unit = 'minutes'
             value = interval.replace('m', '')
-        else: # Default to 1 minute for intraday
+        else:
             unit = 'minutes'
             value = '1'
 
@@ -67,7 +67,7 @@ class UpstoxClient:
                 interval=value
             )
         except Exception as e:
-            print(f"[UpstoxClient] API Error in get_intra_day_candle_data: {e}")
+            logger.error(f"[UpstoxClient] API Error in get_intra_day_candle_data: {e}")
             return None
 
     def get_market_data_feed_authorize(self):
@@ -78,23 +78,22 @@ class UpstoxClient:
     def get_put_call_option_chain(self, instrument_key, expiry_date):
         if not self.api_client: return None
         options_api = upstox_client.OptionsApi(self.api_client)
-        return options_api.get_put_call_option_chain(
-            instrument_key=instrument_key,
-            expiry_date=expiry_date
-        )
+        try:
+            return options_api.get_put_call_option_chain(
+                instrument_key=instrument_key,
+                expiry_date=expiry_date
+            )
+        except Exception as e:
+            logger.error(f"[UpstoxClient] API Error in get_put_call_option_chain: {e}")
+            return None
 
     def get_ltp(self, instrument_keys):
-        """
-        Fetches the last traded price for one or more instrument keys.
-        instrument_keys can be a single string or a comma-separated string of keys.
-        """
         if not self.api_client: return None
-        import upstox_client as upstox_sdk
         try:
-            api_instance = upstox_sdk.MarketQuoteV3Api(self.api_client)
+            api_instance = upstox_client.MarketQuoteV3Api(self.api_client)
             return api_instance.get_ltp(instrument_key=instrument_keys)
         except Exception as e:
-            print(f"[UpstoxClient] API Error in get_ltp: {e}")
+            logger.error(f"[UpstoxClient] API Error in get_ltp: {e}")
             return None
  
     """
