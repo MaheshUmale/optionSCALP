@@ -46,7 +46,8 @@ class BBMeanReversionLong(BaseStrategy):
                     "type": "LONG",
                     "entry_price": last_candle['close'],
                     "sl": last_candle['low'] - 5,
-                    "target": last_candle['close'] + (last_candle['close'] - last_candle['low']) * 2
+                    "target": last_candle['close'] + (last_candle['close'] - last_candle['low']) * 2,
+                    "reason": "Price hit lower Bollinger Band and reversed."
                 }
         return None
 
@@ -84,7 +85,8 @@ class BBMeanReversionShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": last_candle['close'],
                     "sl": last_candle['high'] + 5,
-                    "target": last_candle['close'] - (last_candle['high'] - last_candle['close']) * 2
+                    "target": last_candle['close'] - (last_candle['high'] - last_candle['close']) * 2,
+                    "reason": "Price hit upper Bollinger Band and reversed."
                 }
         return None
 
@@ -114,7 +116,8 @@ class BigDogBreakoutLong(BaseStrategy):
                     "type": "LONG",
                     "entry_price": last_candle['close'],
                     "sl": rl,
-                    "target": last_candle['close'] + (last_candle['close'] - rl) * 3
+                    "target": last_candle['close'] + (last_candle['close'] - rl) * 3,
+                    "reason": "Low volatility consolidation broken upside with high volume."
                 }
         return None
 
@@ -144,7 +147,8 @@ class BigDogBreakoutShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": last_candle['close'],
                     "sl": rh,
-                    "target": last_candle['close'] - (rh - last_candle['close']) * 3
+                    "target": last_candle['close'] - (rh - last_candle['close']) * 3,
+                    "reason": "Low volatility consolidation broken downside with high volume."
                 }
         return None
 
@@ -173,7 +177,8 @@ class BRFShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": last_candle['close'],
                     "sl": mh,
-                    "target": last_candle['close'] - 50
+                    "target": last_candle['close'] - 50,
+                    "reason": "Mother candle breakout (Downside)."
                 }
         return None
 
@@ -200,7 +205,8 @@ class BRFReversalShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": last_candle['close'],
                     "sl": mh,
-                    "target": last_candle['close'] - 100
+                    "target": last_candle['close'] - 100,
+                    "reason": "Mother candle reversal from high."
                 }
         return None
 
@@ -227,7 +233,8 @@ class GapFillLong(BaseStrategy):
                 "type": "LONG",
                 "entry_price": df.iloc[-1]['close'],
                 "sl": df.iloc[-1]['low'],
-                "target": prev_close
+                "target": prev_close,
+                "reason": "Price opening lower than previous close with bullish buildup."
             }
         return None
 
@@ -246,7 +253,8 @@ class IndexBreakoutLong(BaseStrategy):
                 "type": "LONG",
                 "entry_price": last_candle['close'],
                 "sl": last_candle['low'],
-                "target": last_candle['close'] + 50
+                "target": last_candle['close'] + 50,
+                "reason": "Price above MA20 with volume breakout."
             }
         return None
 
@@ -268,7 +276,8 @@ class RSIScalperLong(BaseStrategy):
                     "type": "LONG",
                     "entry_price": df.iloc[-1]['close'],
                     "sl": df.iloc[-1]['low'],
-                    "target": df.iloc[-1]['close'] + 30
+                    "target": df.iloc[-1]['close'] + 30,
+                    "reason": "RSI Oversold reversal."
                 }
         return None
 
@@ -290,7 +299,8 @@ class RSIScalperShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": df.iloc[-1]['close'],
                     "sl": df.iloc[-1]['high'],
-                    "target": df.iloc[-1]['close'] - 30
+                    "target": df.iloc[-1]['close'] - 30,
+                    "reason": "RSI Overbought reversal."
                 }
         return None
 
@@ -316,7 +326,8 @@ class SnapReversalLong(BaseStrategy):
                     "type": "LONG",
                     "entry_price": last['close'],
                     "sl": last['low'],
-                    "target": last['close'] + 40
+                    "target": last['close'] + 40,
+                    "reason": "Pin bar reversal (Bullish)."
                 }
         return None
 
@@ -341,7 +352,8 @@ class SnapReversalShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": last['close'],
                     "sl": last['high'],
-                    "target": last['close'] - 40
+                    "target": last['close'] - 40,
+                    "reason": "Pin bar reversal (Bearish)."
                 }
         return None
 
@@ -359,7 +371,8 @@ class SmartTrendIndexLong(BaseStrategy):
                     "type": "LONG",
                     "entry_price": df.iloc[-1]['close'],
                     "sl": df.iloc[-1]['low'],
-                    "target": df.iloc[-1]['close'] + 60
+                    "target": df.iloc[-1]['close'] + 60,
+                    "reason": "Bullish trend with EMA/VWAP support."
                 }
         return None
 
@@ -377,7 +390,8 @@ class SmartTrendIndexShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": df.iloc[-1]['close'],
                     "sl": df.iloc[-1]['high'],
-                    "target": df.iloc[-1]['close'] - 60
+                    "target": df.iloc[-1]['close'] - 60,
+                    "reason": "Bearish trend with EMA/VWAP resistance."
                 }
         return None
 
@@ -406,7 +420,8 @@ class InstitutionalDemandLong(BaseStrategy):
                     "type": "LONG",
                     "entry_price": last['close'],
                     "sl": bl,
-                    "target": last['close'] + 100
+                    "target": last['close'] + 100,
+                    "reason": "Retest of institutional demand zone."
                 }
         return None
 
@@ -428,7 +443,8 @@ class RoundLevelRejectionShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": price,
                     "sl": df.iloc[-1]['high'],
-                    "target": price - 50
+                    "target": price - 50,
+                    "reason": "Rejection from round psychological level."
                 }
         return None
 
@@ -449,7 +465,8 @@ class SampleTrendReversalShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": df.iloc[-1]['close'],
                     "sl": df.iloc[-1]['high'],
-                    "target": df.iloc[-1]['close'] - 100
+                    "target": df.iloc[-1]['close'] - 100,
+                    "reason": "Overextended trend reversal."
                 }
         return None
 
@@ -472,7 +489,8 @@ class ScreenerMomentumLong(BaseStrategy):
                     "type": "LONG",
                     "entry_price": df.iloc[-1]['close'],
                     "sl": df.iloc[-1]['low'],
-                    "target": df.iloc[-1]['close'] + 50
+                    "target": df.iloc[-1]['close'] + 50,
+                    "reason": "Strong momentum with volume breakout."
                 }
         return None
 
@@ -494,7 +512,8 @@ class VolumeSpikeScalperLong(BaseStrategy):
                     "type": "LONG",
                     "entry_price": df.iloc[-1]['close'],
                     "sl": df.iloc[-1]['low'],
-                    "target": df.iloc[-1]['close'] + 30
+                    "target": df.iloc[-1]['close'] + 30,
+                    "reason": "Volume spike with large body candle."
                 }
         return None
 
@@ -512,7 +531,8 @@ class VWAPEMAGateLong(BaseStrategy):
                     "type": "LONG",
                     "entry_price": df.iloc[-1]['close'],
                     "sl": ema9.iloc[-1],
-                    "target": df.iloc[-1]['close'] + 40
+                    "target": df.iloc[-1]['close'] + 40,
+                    "reason": "Price above VWAP and EMA9 with volume."
                 }
         return None
 
@@ -530,7 +550,8 @@ class VWAPEMAGateShort(BaseStrategy):
                     "type": "SHORT",
                     "entry_price": df.iloc[-1]['close'],
                     "sl": ema9.iloc[-1],
-                    "target": df.iloc[-1]['close'] - 40
+                    "target": df.iloc[-1]['close'] - 40,
+                    "reason": "Price below VWAP and EMA9 with volume."
                 }
         return None
 
@@ -548,7 +569,8 @@ class OptionBuyTest(BaseStrategy):
                 "type": "LONG",
                 "entry_price": last_candle['close'],
                 "sl": last_candle['low'] - 10,
-                "target": last_candle['close'] + 20
+                "target": last_candle['close'] + 20,
+                "reason": "Test Signal."
             }
         return None
 

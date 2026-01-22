@@ -161,12 +161,7 @@ ws.onmessage = (event) => {
         return;
     }
 
-    if (data.type === 'live_data' || data.type === 'replay_step' || data.type === 'history_data') {
-        if (data.type === 'replay_step') {
-            const slider = document.getElementById('replay-slider');
-            if (data.max_idx) slider.max = data.max_idx;
-            if (data.current_idx) slider.value = data.current_idx;
-        }
+    if (data.type === 'live_data' || data.type === 'replay_step' || data.type === 'history_data' || data.type === 'backtest_results') {
 
         const i_data = data.index_data || (data.is_index ? data.data : null);
         const c_data = data.ce_data || (data.is_ce ? data.data : null);
@@ -175,14 +170,14 @@ ws.onmessage = (event) => {
         if (i_data && idxSeries) {
             idxSeries.setData(i_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
             idxVolSeries.setData(i_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
-            if (data.type === 'live_data') setTimeout(() => idxChart.timeScale().fitContent(), 100);
+            if (data.type === 'live_data' || data.type === 'backtest_results') setTimeout(() => idxChart.timeScale().fitContent(), 100);
         }
 
         if (c_data) {
             if (ceSeries) {
                 ceSeries.setData(c_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
                 ceVolSeries.setData(c_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
-                if (data.type === 'live_data') setTimeout(() => ceChart.timeScale().fitContent(), 100);
+                if (data.type === 'live_data' || data.type === 'backtest_results') setTimeout(() => ceChart.timeScale().fitContent(), 100);
             }
             if (data.ce_markers) {
                 ceMarkers = data.ce_markers;
@@ -194,7 +189,7 @@ ws.onmessage = (event) => {
             if (peSeries) {
                 peSeries.setData(p_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
                 peVolSeries.setData(p_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
-                if (data.type === 'live_data') setTimeout(() => peChart.timeScale().fitContent(), 100);
+                if (data.type === 'live_data' || data.type === 'backtest_results') setTimeout(() => peChart.timeScale().fitContent(), 100);
             }
             if (data.pe_markers) {
                 peMarkers = data.pe_markers;
@@ -223,6 +218,10 @@ ws.onmessage = (event) => {
         }
         if (data.new_signals) {
             data.new_signals.forEach(sig => updateSignal(sig));
+        }
+
+        if (data.strategy_report) {
+            renderStrategyReport(data.strategy_report);
         }
 
         document.getElementById('status').innerText = `Status: Connected | Trend: ${data.trend || 'N/A'}`;
@@ -290,9 +289,6 @@ ws.onmessage = (event) => {
 
 function updateSignal(sig) {
     const list = document.getElementById('signals-list');
-    if (list.style.display === 'none') {
-        // Auto-show if new signal comes? Or just pulse the header?
-    }
     const div = document.createElement('div');
     div.className = 'signal-item';
     const strat = sig.strat_name || "STRATEGY";
@@ -303,8 +299,36 @@ function updateSignal(sig) {
     const timeStr = sig.time ? new Date((sig.time - 19800) * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
 
     div.style.borderLeft = `4px solid ${color}`;
-    div.innerHTML = `[${timeStr}] <b>${strat}</b> (${side}) @ ${sig.entry_price.toFixed(2)} (SL: ${sig.sl.toFixed(2)})`;
+    div.title = sig.reason || ""; // Tooltip
+    div.innerHTML = `[${timeStr}] <b>${strat}</b> (${side}) @ ${sig.entry_price.toFixed(2)} (SL: ${sig.sl ? sig.sl.toFixed(2) : 'N/A'})<br><small style="color: #888;">${sig.reason || ''}</small>`;
     list.prepend(div);
+}
+
+function renderStrategyReport(report) {
+    let reportEl = document.getElementById('strategy-report');
+    if (!reportEl) {
+        const container = document.createElement('div');
+        container.id = 'strategy-report-container';
+        container.className = 'dashboard-card';
+        container.style.marginTop = '20px';
+        container.innerHTML = '<h3>STRATEGY PERFORMANCE</h3><div id="strategy-report"></div>';
+        const main = document.querySelector('.main-container');
+        if (main) main.appendChild(container);
+        reportEl = document.getElementById('strategy-report');
+    }
+
+    let html = '<table class="report-table"><thead><tr><th>Strategy</th><th>Trades</th><th>Win Rate</th><th>Net PnL</th></tr></thead><tbody>';
+    for (const [name, stats] of Object.entries(report)) {
+        const color = stats.pnl >= 0 ? '#26a69a' : '#ef5350';
+        html += `<tr>
+            <td>${name}</td>
+            <td>${stats.total}</td>
+            <td>${stats.win_rate}%</td>
+            <td style="color: ${color}; font-weight: bold;">₹${stats.pnl.toFixed(2)}</td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    reportEl.innerHTML = html;
 }
 
 function updateDeltaSignal(sig) {
@@ -361,17 +385,13 @@ function updatePnLStats(stats) {
 }
 
 function fetchLive() { ws.send(JSON.stringify({ type: 'fetch_live', index: document.getElementById('index-select').value })); }
-function startReplay() {
+function runFullBacktest() {
     ws.send(JSON.stringify({
-        type: 'start_replay',
+        type: 'run_backtest',
         index: document.getElementById('index-select').value,
-        date: document.getElementById('replay-date') ? document.getElementById('replay-date').value : null
+        date: document.getElementById('replay-date').value
     }));
 }
-function pauseReplay() { ws.send(JSON.stringify({ type: 'pause_replay' })); }
-function stepReplay() { ws.send(JSON.stringify({ type: 'step_replay' })); }
-function setReplaySpeed(val) { ws.send(JSON.stringify({ type: 'set_replay_speed', speed: parseFloat(val) })); }
-function onSliderChange(val) { ws.send(JSON.stringify({ type: 'set_replay_index', index: parseInt(val) })); }
 
 window.onload = () => {
     initCharts();

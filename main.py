@@ -65,7 +65,6 @@ class SessionState:
         self.pcr_insights = {}
         self.buildup_history = []
         self.replay_idx = 0
-        self.replay_speed = 0.5
         self.replay_data_idx = None
         self.replay_data_ce = None
         self.replay_data_pe = None
@@ -391,37 +390,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
                     await send_replay_step(websocket, state)
 
-                elif data['type'] == 'set_replay_index':
-                    # Re-simulation for Slider Scrubbing (Ensures Exact State)
-                    target_idx = data['index']
+                elif data['type'] == 'run_backtest':
+                    await run_full_backtest(websocket, state, data['index'], data.get('date', '2026-01-22'))
 
-                    # 1. Reset state
-                    state.reset_strategies()
-                    state.reset_trading_state()
-
-                    # 2. Fast-forward from start up to target_idx
-                    # Replay data normally starts after index 50 to allow indicators to stabilize
-                    start_idx = 50
-                    if target_idx > start_idx:
-                        for i in range(start_idx, target_idx):
-                             state.replay_idx = i
-                             # Send=False means we don't broadcast intervening frames
-                             await send_replay_step(websocket, state, send=False)
-
-                    # 3. Final step at target index
-                    state.replay_idx = max(start_idx, target_idx)
-                    await send_replay_step(websocket, state, send=True)
-
-                elif data['type'] == 'pause_replay':
-                    state.is_playing = False
-
-                elif data['type'] == 'step_replay':
-                    if state.replay_data_ce is not None and state.replay_idx < len(state.replay_data_ce):
-                        state.replay_idx += 1
-                        await send_replay_step(websocket, state)
-
-                elif data['type'] == 'set_replay_speed':
-                    state.replay_speed = float(data['speed'])
 
                 elif data['type'] == 'subscribe_symbol':
                     sub_sym = f"NSE:{data['symbol'].replace('NSE:', '')}"
@@ -466,22 +437,9 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.exception("Listen Error")
 
-    async def replay_loop():
-        try:
-            while websocket.client_state == WebSocketState.CONNECTED:
-                if state.is_playing and state.replay_data_ce is not None:
-                    # print(f"Replay loop step: {state.replay_idx}")
-                    if state.replay_idx < len(state.replay_data_ce):
-                        state.replay_idx += 1
-                        await send_replay_step(websocket, state)
-                    else:
-                        state.is_playing = False
-                await asyncio.sleep(state.replay_speed)
-        except Exception as e:
-            logger.error(f"Replay Loop Error: {e}")
 
     try:
-        await asyncio.gather(listen_task(), replay_loop())
+        await listen_task()
     finally:
         feed_manager.unsubscribe(live_callback)
 
@@ -710,6 +668,125 @@ async def send_replay_step(websocket, state, send=True):
             await websocket.send_json(clean_json(msg))
     except Exception as e:
         print(f"ERROR in send_replay_step: {e}")
+
+async def run_full_backtest(websocket, state, index_sym, date_str):
+    try:
+        logger.info(f"Running full day backtest for {index_sym} on {date_str}")
+        state.reset_strategies()
+        state.reset_trading_state()
+
+        ref_date = datetime.strptime(date_str, "%Y-%m-%d")
+        # Ensure we cover full market hours
+        ref_date_eod = ref_date.replace(hour=15, minute=30)
+
+        # 1. Fetch Full Day Data
+        idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date_eod)
+        if not idx_df.empty: idx_df = idx_df.between_time('03:45', '10:00')
+        if idx_df.empty:
+            await websocket.send_json({"type": "error", "message": f"No data found for {index_sym} on {date_str}"})
+            return
+
+        strike = dm.get_atm_strike(idx_df['close'].iloc[0], step=100 if "BANK" in index_sym else 50)
+        ce_sym = dm.get_option_symbol(index_sym, strike, "C", reference_date=ref_date_eod)
+        pe_sym = dm.get_option_symbol(index_sym, strike, "P", reference_date=ref_date_eod)
+
+        state.index_sym = f"NSE:{index_sym}"
+        state.ce_sym = f"NSE:{ce_sym}"
+        state.pe_sym = f"NSE:{pe_sym}"
+
+        ce_df = dm.get_data(ce_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date_eod)
+        pe_df = dm.get_data(pe_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date_eod)
+        if not ce_df.empty: ce_df = ce_df.between_time('03:45', '10:00')
+        if not pe_df.empty: pe_df = pe_df.between_time('03:45', '10:00')
+
+        if ce_df.empty or pe_df.empty:
+            await websocket.send_json({"type": "error", "message": f"Option data not found for {ce_sym} or {pe_sym}"})
+            return
+
+        # Fetch PCR Insights for the full day (or representative snapshot)
+        pcr_res = await fetch_pcr_insights(index_sym, ref_date=ref_date_eod)
+        state.pcr_insights = pcr_res.get('insights', {})
+        state.buildup_history = pcr_res.get('buildup_list', [])
+
+        # 2. Sequential Simulation (All at once)
+        max_len = min(len(ce_df), len(pe_df))
+        start_idx = 50
+
+        for i in range(start_idx, max_len):
+            sub_ce = ce_df.iloc[max(0, i-50):i]
+            sub_pe = pe_df.iloc[max(0, i-50):i]
+            last_time = sub_ce.index[-1]
+            # Precise index slice for this timestamp
+            idx_full = idx_df[idx_df.index <= last_time]
+            sub_idx = idx_full.iloc[-50:]
+
+            # Use shifted timestamp for logic consistency
+            c_time = int(last_time.timestamp()) + 19800
+
+            # PCR & Buildup Sync
+            hist_buildup = get_buildup_for_time(state.buildup_history, last_time)
+            if hist_buildup: state.pcr_insights['buildup_status'] = hist_buildup
+
+            # Exits and Strategy Check
+            check_trade_exits(state, sub_idx, sub_ce, sub_pe, store_db=False)
+            new_sigs = evaluate_all_strategies(state, sub_idx, sub_ce, sub_pe, last_time, c_time, record_trades=True, store_db=False)
+
+            for sig in new_sigs:
+                color = "#2196F3" if sig['strat_name'] == "TREND_FOLLOWING" else "#FF9800"
+                marker = {"time": sig['time'], "position": "belowBar", "color": color, "shape": "arrowUp", "text": sig['strat_name']}
+                if sig.get('is_pe'):
+                    state.pe_markers.append(marker)
+                else:
+                    state.ce_markers.append(marker)
+
+        # 3. Compile Strategy Performance Report
+        report = {}
+        for t in state.pnl_tracker.trades:
+            s_name = t.strategy_name
+            if s_name not in report: report[s_name] = {"pnl": 0, "win": 0, "loss": 0, "total": 0}
+            report[s_name]["total"] += 1
+            if t.status == 'CLOSED':
+                report[s_name]["pnl"] += t.pnl
+                if t.pnl > 0: report[s_name]["win"] += 1
+                else: report[s_name]["loss"] += 1
+
+        for s in report:
+            report[s]["win_rate"] = round((report[s]["win"] / report[s]["total"] * 100), 1) if report[s]["total"] > 0 else 0
+            report[s]["pnl"] = round(report[s]["pnl"], 2)
+
+        # 4. Final Payload
+        all_signals = []
+        for t in state.pnl_tracker.trades:
+            all_signals.append({
+                "strat_name": t.strategy_name,
+                "time": t.entry_time,
+                "entry_price": t.entry_price,
+                "sl": t.sl,
+                "type": "LONG" if "PE" not in t.symbol else "SHORT",
+                "reason": getattr(t, 'reason', 'Technical breakout confirmed.') # Fallback
+            })
+
+        msg = {
+            "type": "backtest_results",
+            "index_symbol": index_sym,
+            "ce_symbol": f"NSE:{ce_sym}",
+            "pe_symbol": f"NSE:{pe_sym}",
+            "index_data": format_records(idx_df),
+            "ce_data": format_records(ce_df),
+            "pe_data": format_records(pe_df),
+            "ce_markers": state.ce_markers,
+            "pe_markers": state.pe_markers,
+            "ce_symbol": ce_sym,
+            "pe_symbol": pe_sym,
+            "pnl_stats": state.pnl_tracker.get_stats(),
+            "new_signals": all_signals,
+            "strategy_report": report
+        }
+        await websocket.send_json(clean_json(msg))
+
+    except Exception as e:
+        logger.exception("Full Backtest Error")
+        await websocket.send_json({"type": "error", "message": str(e)})
 
 def clean_json(obj):
     if isinstance(obj, dict):
@@ -1177,6 +1254,7 @@ def handle_new_trade(state, strategy_name, symbol, setup, time, store=True, stor
     # all trades are "LONG" on the option premium.
     t_type = 'LONG'
     trade = Trade(symbol, setup['entry_price'], time, t_type, strategy_name, sl=setup.get('sl'), target=setup.get('target'))
+    trade.reason = setup.get('reason', 'Strategy conditions met.')
     # Persist trade to DB if requested
     if store_db:
         db.store_trade(trade)
