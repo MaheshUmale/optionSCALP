@@ -887,32 +887,27 @@ async def handle_live_update(websocket, state, update):
     elif is_ce: target_candle = state.last_ce_candle
     else: target_candle = state.last_pe_candle
 
-    # Handle broker OHLC correction for completed candles (I1 is prior minute)
+    # Handle broker OHLC correction for COMPLETED candles (I1 is strictly the prior minute)
     if update.get('ohlc'):
         u_ohlc = update['ohlc']
         # Use broker timestamp and convert to shifted IST
         u_ts = (int(u_ohlc.get('ts', 0)) // 1000) + 19800
 
-        # 1. Update current building candle if it matches
-        if target_candle and u_ts == target_candle['time']:
-            target_candle['open'] = u_ohlc.get('open', target_candle['open'])
-            target_candle['high'] = max(target_candle['high'], u_ohlc.get('high', 0))
-            target_candle['low'] = min(target_candle['low'], u_ohlc.get('low', 999999))
-                        # Note: We don't overwrite 'close' here if it's the current candle,
-                        # because update['price'] (LTP) is more recent.
-                        # But we update high/low from broker's aggregated view.
-            if u_ohlc.get('volume'): target_candle['volume'] = float(u_ohlc['volume'])
-
-        # 2. Update historical candles if they match (I1 is often 1-2 minutes old)
+        # Search in history for the matching completed candle
         history = state.idx_history if is_index else (state.ce_history if is_ce else state.pe_history)
-        for h_candle in reversed(history[-5:]):
+        for h_candle in reversed(history[-10:]): # Check last 10 candles
             if h_candle['time'] == u_ts:
+                # Prioritize broker's finalized OHLC for historical candles
                 h_candle['open'] = u_ohlc.get('open', h_candle['open'])
                 h_candle['high'] = u_ohlc.get('high', h_candle['high'])
                 h_candle['low'] = u_ohlc.get('low', h_candle['low'])
                 h_candle['close'] = u_ohlc.get('close', h_candle['close'])
                 if u_ohlc.get('volume'): h_candle['volume'] = float(u_ohlc['volume'])
-                # Send historical correction to UI
+
+                # Update DB with corrected finalized data
+                db.store_ohlcv(clean_symbol, "Interval.in_1_minute", pd.DataFrame([h_candle]))
+
+                # Broadcast correction to UI
                 await websocket.send_json(clean_json({
                     "type": "live_update", "symbol": update['symbol'], "candle": h_candle,
                     "is_index": is_index, "is_ce": is_ce, "is_pe": is_pe
