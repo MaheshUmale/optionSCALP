@@ -71,6 +71,7 @@ class TrendFollowingStrategy(BaseStrategy):
                 return {
                     "type": f"{option_type}_ENTRY",
                     "entry_price": last_candle['high'] + 1,
-                    "sl": last_candle['low']
+                    "sl": last_candle['low'],
+                    "reason": f"Trend Following {trend} pullback on {option_type}."
                 }
         return None

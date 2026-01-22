@@ -14,17 +14,8 @@
                 <option value="BANKNIFTY">BANKNIFTY</option>
                 <option value="NIFTY">NIFTY</option>
             </select>
-            <input type="date" id="replay-date" value="2026-01-21" style="background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px; margin: 0 5px;">
-            <button onclick="startReplay()" class="btn-replay">Start Replay</button>
-            <button onclick="pauseReplay()">Pause</button>
-            <button onclick="stepReplay()">Step</button>
-            <select id="speed-select" onchange="setReplaySpeed(this.value)" style="margin-left: 10px; background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px;">
-                <option value="1.0">0.5x</option>
-                <option value="0.5" selected>1x</option>
-                <option value="0.2">2x</option>
-                <option value="0.1">5x</option>
-            </select>
-            <input type="range" id="replay-slider" min="50" max="300" value="50" style="width: 150px; margin-left: 10px;" oninput="onSliderChange(this.value)">
+            <input type="date" id="replay-date" value="2026-01-22" style="background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px; margin: 0 5px;">
+            <button onclick="runFullBacktest()" class="btn-replay">Run Backtest</button>
             <a href="/" class="btn-nav">Switch to Live</a>
         </div>
         <div id="status" class="status">System Ready</div>

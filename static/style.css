@@ -196,6 +196,23 @@ body {
     animation: slideIn 0.3s ease-out;
 }
 
+.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.report-table th, .report-table td {
+    padding: 8px;
+    text-align: left;
+    border-bottom: 1px solid #333;
+}
+
+.report-table th {
+    color: #888;
+    font-weight: normal;
+}
+
 @keyframes slideIn {
     from { transform: translateX(20px); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
