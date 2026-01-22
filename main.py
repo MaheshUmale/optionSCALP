@@ -197,9 +197,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     start_bar = max(20, len(ce_df) - 300)
                     for i in range(start_bar, len(ce_df)):
                         last_time = ce_df.index[i]
-                        sub_idx = idx_df.iloc[:i+1]
-                        sub_ce = ce_df.iloc[:i+1]
-                        sub_pe = pe_df.iloc[:i+1]
+                        # Use at least 50 bars for indicator stability during warmup
+                        sub_idx = idx_df.iloc[max(0, i-50):i+1]
+                        sub_ce = ce_df.iloc[max(0, i-50):i+1]
+                        sub_pe = pe_df.iloc[max(0, i-50):i+1]
 
                         # Use shifted timestamp for markers
                         c_time = ce_recs[i]['time']
@@ -225,6 +226,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.pcr_insights = pcr_res.get('insights', {})
                     state.buildup_history = pcr_res.get('buildup_list', [])
 
+                    # Convert trades to new_signals for the UI list
+                    historical_signals = []
+                    for t in state.pnl_tracker.trades:
+                        historical_signals.append({
+                            "strat_name": t.strategy_name,
+                            "time": t.entry_time,
+                            "entry_price": t.entry_price,
+                            "sl": t.sl or 0,
+                            "type": "LONG" if "PE" not in t.symbol else "SHORT" # Simplified side detection
+                        })
+
                     await websocket.send_json(clean_json({
                         "type": "live_data",
                         "index_symbol": index_sym,
@@ -237,7 +249,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         "pe_symbol": state.pe_sym,
                         "trend": state.tf_main.get_trend(idx_df, state.pcr_insights),
                         "delta_signals": delta_signals,
-                        "pcr_insights": state.pcr_insights
+                        "pcr_insights": state.pcr_insights,
+                        "pnl_stats": state.pnl_tracker.get_stats(),
+                        "new_signals": historical_signals
                     }))
 
                     feed_manager.subscribe(live_callback)
@@ -311,6 +325,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif data['type'] == 'start_replay':
                     logger.info(f"Starting replay for {data['index']} at {data.get('date', 'now')}")
+                    state.is_playing = False
+                    state.is_live = False
                     # Reset state for new replay
                     state.active_trades = []
                     state.pnl_tracker = PnLTracker()
@@ -462,14 +478,15 @@ def is_within_trading_window(ts_utc):
     h, m = ist_dt.hour, ist_dt.minute
     current_time = h * 60 + m
 
+    # Standard Market Hours (IST)
     start_time = 9 * 60 + 15
-    end_time = 15 * 60 + 25
+    end_time = 15 * 60 + 30
 
     return start_time <= current_time <= end_time
 
 def is_market_closing(ts_utc):
     """
-    Check if IST time is 15:25 or later (Matching is_within_trading_window end).
+    Check if IST time is 15:25 or later.
     """
     if isinstance(ts_utc, (int, float)):
         dt = datetime.fromtimestamp(ts_utc, tz=timezone.utc)
@@ -480,6 +497,7 @@ def is_market_closing(ts_utc):
     h, m = ist_dt.hour, ist_dt.minute
     current_time = h * 60 + m
 
+    # Standard Square-off time (IST)
     close_time = 15 * 60 + 25
     return current_time >= close_time
 
@@ -591,12 +609,14 @@ async def send_replay_step(websocket, state):
         if state.replay_data_ce is None or state.replay_data_pe is None or state.replay_data_idx is None: return
 
         # 2. Slice Data
-        sub_ce = state.replay_data_ce.iloc[:state.replay_idx]
-        sub_pe = state.replay_data_pe.iloc[:state.replay_idx]
+        sub_ce = state.replay_data_ce.iloc[max(0, state.replay_idx-50):state.replay_idx]
+        sub_pe = state.replay_data_pe.iloc[max(0, state.replay_idx-50):state.replay_idx]
         if sub_ce.empty or sub_pe.empty: return
 
         last_time = sub_ce.index[-1]
-        sub_idx = state.replay_data_idx[state.replay_data_idx.index <= last_time]
+        # Matching slice for index
+        idx_full = state.replay_data_idx[state.replay_data_idx.index <= last_time]
+        sub_idx = idx_full.iloc[-50:]
         if sub_idx.empty: return
 
         # 3. Initialize Context
@@ -614,6 +634,10 @@ async def send_replay_step(websocket, state):
         if len(state.active_trades) != old_trades_count:
              # Re-calculate stats if a trade closed
              state.pnl_tracker.update_stats()
+
+        # Update PnL stats even if no trade closed (to track open PnL if needed,
+        # though currently update_stats only handles closed)
+        state.pnl_tracker.update_stats()
 
         # EOD Square-off check
         if is_market_closing(last_time):
@@ -984,7 +1008,13 @@ async def handle_live_update(websocket, state, update):
                 # In Live, we check all strats on ANY candle close to match Replay sequential processing
                 # but only if the relevant dataframes are not empty.
                 # Use current_utc shifted for trading window check inside evaluate_all_strategies
-                new_live_signals = evaluate_all_strategies(state, idx_df, ce_df, pe_df, current_utc, target_candle['time'])
+
+                # Use sliding window for strategy calculation (matching warmup and replay)
+                s_idx = idx_df.iloc[-50:]
+                s_ce = ce_df.iloc[-50:]
+                s_pe = pe_df.iloc[-50:]
+
+                new_live_signals = evaluate_all_strategies(state, s_idx, s_ce, s_pe, current_utc, target_candle['time'])
 
                 for sig in new_live_signals:
                      color = "#2196F3" if sig['strat_name'] == "TREND_FOLLOWING" else "#FF9800"
