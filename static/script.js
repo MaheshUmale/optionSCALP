@@ -360,6 +360,29 @@ function startReplay() {
         date: document.getElementById('replay-date') ? document.getElementById('replay-date').value : null
     }));
 }
+
+function toggleMongoUI() {
+    const std = document.getElementById('standard-replay-controls');
+    const mongo = document.getElementById('mongo-replay-controls');
+    if (std.style.display === 'none') {
+        std.style.display = 'block';
+        mongo.style.display = 'none';
+    } else {
+        std.style.display = 'none';
+        mongo.style.display = 'block';
+    }
+}
+
+function startMongoReplay() {
+    ws.send(JSON.stringify({
+        type: 'start_mongo_backtest',
+        index_key: document.getElementById('mongo-idx').value,
+        ce_key: document.getElementById('mongo-ce').value,
+        pe_key: document.getElementById('mongo-pe').value,
+        date: document.getElementById('mongo-date').value
+    }));
+}
+
 function pauseReplay() { ws.send(JSON.stringify({ type: 'pause_replay' })); }
 function stepReplay() { ws.send(JSON.stringify({ type: 'step_replay' })); }
 function setReplaySpeed(val) { ws.send(JSON.stringify({ type: 'set_replay_speed', speed: parseFloat(val) })); }
