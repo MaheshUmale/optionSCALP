@@ -60,20 +60,8 @@ tl_adv = TrendlyneScalper()
 
 class SessionState:
     def __init__(self):
-        # Segregate strategy instances by symbol category to prevent variable collision
-        self.strategies = {
-            "CE": [s() for s in STRATEGIES],
-            "PE": [s() for s in STRATEGIES],
-            "INDEX": [s() for s in STRATEGIES]
-        }
-        self.tf_strategies = {
-            "CE": TrendFollowingStrategy(),
-            "PE": TrendFollowingStrategy()
-        }
-        self.tf_main = TrendFollowingStrategy() # For index trend calculation
-        self.active_trades = []
-        self.pnl_tracker = PnLTracker()
-        self.last_trade_close_times = {} # (strategy_name, symbol) -> timestamp
+        self.reset_strategies()
+        self.reset_trading_state()
         self.pcr_insights = {}
         self.buildup_history = []
         self.replay_idx = 0
@@ -101,6 +89,28 @@ class SessionState:
         self.subscribed_symbols = set()
         self.last_subscribed_candle = {} # symbol -> candle
         self.subscribed_history = {} # symbol -> list of candles
+
+    def reset_strategies(self):
+        """Recreate strategy instances to clear internal variables."""
+        self.strategies = {
+            "CE": [s() for s in STRATEGIES],
+            "PE": [s() for s in STRATEGIES],
+            "INDEX": [s() for s in STRATEGIES]
+        }
+        self.tf_strategies = {
+            "CE": TrendFollowingStrategy(),
+            "PE": TrendFollowingStrategy()
+        }
+        self.tf_main = TrendFollowingStrategy()
+
+    def reset_trading_state(self):
+        """Reset trades, PnL, and markers."""
+        self.active_trades = []
+        self.pnl_tracker = PnLTracker()
+        self.last_trade_close_times = {} # (strategy_name, symbol) -> timestamp
+        self.ce_markers = []
+        self.pe_markers = []
+        self.last_total_volumes = {}
 
 @app.get("/", response_class=HTMLResponse)
 async def get_live(request: Request):
@@ -144,12 +154,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.is_playing = False
                     state.is_live = True
                     # Reset state for live mode
-                    state.active_trades = []
-                    state.pnl_tracker = PnLTracker()
-                    state.ce_markers = []
-                    state.pe_markers = []
-                    state.last_trade_close_times = {}
-                    state.last_total_volumes = {}
+                    state.reset_strategies()
+                    state.reset_trading_state()
                     await websocket.send_json({"type": "reset_ui"})
 
                     index_raw = data['index'].replace("NSE:", "")
@@ -206,7 +212,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         c_time = ce_recs[i]['time']
 
                         # In warmup, we check for exits too to keep state clean
-                        check_trade_exits(state, sub_idx, sub_ce, sub_pe)
+                        check_trade_exits(state, sub_idx, sub_ce, sub_pe, store_db=False)
 
                         # Run unified strategy processor (warmup mode)
                         # Warmup mode records trades in memory to track state/cooldown but avoids DB spam
@@ -247,7 +253,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "pe_markers": state.pe_markers,
                         "ce_symbol": state.ce_sym,
                         "pe_symbol": state.pe_sym,
-                        "trend": state.tf_main.get_trend(idx_df, state.pcr_insights),
+                        "trend": state.tf_main.get_trend(idx_df.iloc[-50:], state.pcr_insights),
                         "delta_signals": delta_signals,
                         "pcr_insights": state.pcr_insights,
                         "pnl_stats": state.pnl_tracker.get_stats(),
@@ -328,11 +334,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.is_playing = False
                     state.is_live = False
                     # Reset state for new replay
-                    state.active_trades = []
-                    state.pnl_tracker = PnLTracker()
-                    state.ce_markers = []
-                    state.pe_markers = []
-                    state.last_trade_close_times = {}
+                    state.reset_strategies()
+                    state.reset_trading_state()
                     await websocket.send_json({"type": "reset_ui"})
 
                     index_sym = data['index']
@@ -389,8 +392,25 @@ async def websocket_endpoint(websocket: WebSocket):
                     await send_replay_step(websocket, state)
 
                 elif data['type'] == 'set_replay_index':
-                    state.replay_idx = data['index']
-                    await send_replay_step(websocket, state)
+                    # Re-simulation for Slider Scrubbing (Ensures Exact State)
+                    target_idx = data['index']
+
+                    # 1. Reset state
+                    state.reset_strategies()
+                    state.reset_trading_state()
+
+                    # 2. Fast-forward from start up to target_idx
+                    # Replay data normally starts after index 50 to allow indicators to stabilize
+                    start_idx = 50
+                    if target_idx > start_idx:
+                        for i in range(start_idx, target_idx):
+                             state.replay_idx = i
+                             # Send=False means we don't broadcast intervening frames
+                             await send_replay_step(websocket, state, send=False)
+
+                    # 3. Final step at target index
+                    state.replay_idx = max(start_idx, target_idx)
+                    await send_replay_step(websocket, state, send=True)
 
                 elif data['type'] == 'pause_replay':
                     state.is_playing = False
@@ -602,10 +622,10 @@ def get_buildup_for_time(buildup_history, current_time):
             continue
     return None
 
-async def send_replay_step(websocket, state):
+async def send_replay_step(websocket, state, send=True):
     try:
         # 1. Basic Validation
-        if websocket.client_state != WebSocketState.CONNECTED: return
+        if send and websocket.client_state != WebSocketState.CONNECTED: return
         if state.replay_data_ce is None or state.replay_data_pe is None or state.replay_data_idx is None: return
 
         # 2. Slice Data
@@ -630,13 +650,12 @@ async def send_replay_step(websocket, state):
 
         # 4. Check Active Trades
         old_trades_count = len(state.active_trades)
-        check_trade_exits(state, sub_idx, sub_ce, sub_pe)
+        check_trade_exits(state, sub_idx, sub_ce, sub_pe, store_db=False) # Replay doesn't write to primary trade DB
         if len(state.active_trades) != old_trades_count:
              # Re-calculate stats if a trade closed
              state.pnl_tracker.update_stats()
 
-        # Update PnL stats even if no trade closed (to track open PnL if needed,
-        # though currently update_stats only handles closed)
+        # Final Update PnL stats for the current state
         state.pnl_tracker.update_stats()
 
         # EOD Square-off check
@@ -687,7 +706,8 @@ async def send_replay_step(websocket, state):
             "new_signals": new_signals
         }
 
-        await websocket.send_json(clean_json(msg))
+        if send:
+            await websocket.send_json(clean_json(msg))
     except Exception as e:
         print(f"ERROR in send_replay_step: {e}")
 
@@ -1007,14 +1027,18 @@ async def handle_live_update(websocket, state, update):
                 # Run unified strategy processor
                 # In Live, we check all strats on ANY candle close to match Replay sequential processing
                 # but only if the relevant dataframes are not empty.
-                # Use current_utc shifted for trading window check inside evaluate_all_strategies
+                # Use candle time for trading window check inside evaluate_all_strategies for parity
 
                 # Use sliding window for strategy calculation (matching warmup and replay)
                 s_idx = idx_df.iloc[-50:]
                 s_ce = ce_df.iloc[-50:]
                 s_pe = pe_df.iloc[-50:]
 
-                new_live_signals = evaluate_all_strategies(state, s_idx, s_ce, s_pe, current_utc, target_candle['time'])
+                # Convert target_candle time (IST-shifted UTC) back to naive for window check
+                # Note: evaluate_all_strategies expects a datetime for the 'last_time' window check
+                dt_for_window = pd.to_datetime(target_candle['time'] - 19800, unit='s', utc=True)
+
+                new_live_signals = evaluate_all_strategies(state, s_idx, s_ce, s_pe, dt_for_window, target_candle['time'])
 
                 for sig in new_live_signals:
                      color = "#2196F3" if sig['strat_name'] == "TREND_FOLLOWING" else "#FF9800"
@@ -1075,7 +1099,7 @@ async def handle_live_update(websocket, state, update):
                 "delta_signals": delta_signals,
                 "pcr_insights": state.pcr_insights,
                 "option_chain": option_chain_data,
-                "trend": state.tf_main.get_trend(pd.DataFrame(state.idx_history), state.pcr_insights) if state.idx_history else None
+                "trend": state.tf_main.get_trend(pd.DataFrame(state.idx_history).iloc[-50:], state.pcr_insights) if state.idx_history else None
             }))
     else:
         # Update current candle from tick (ALWAYS USE LTP)
@@ -1114,6 +1138,7 @@ async def handle_live_update(websocket, state, update):
 
             if closed:
                 trade.close(exit_price, last_time, reason)
+                # Live mode always stores trades in DB
                 db.store_trade(trade)
                 state.last_trade_close_times[(trade.strategy_name, trade.symbol)] = last_time
                 state.active_trades.remove(trade)
@@ -1159,7 +1184,7 @@ def handle_new_trade(state, strategy_name, symbol, setup, time, store=True, stor
     state.pnl_tracker.add_trade(trade)
     return True
 
-def check_trade_exits(state, sub_idx, sub_ce, sub_pe):
+def check_trade_exits(state, sub_idx, sub_ce, sub_pe, store_db=True):
     for trade in state.active_trades[:]:
         df = sub_ce if trade.symbol == state.ce_sym else (sub_pe if trade.symbol == state.pe_sym else sub_idx)
         if df.empty: continue
@@ -1184,8 +1209,9 @@ def check_trade_exits(state, sub_idx, sub_ce, sub_pe):
 
         if closed:
             trade.close(exit_price, last_time, reason)
-            # Update trade in DB
-            db.store_trade(trade)
+            # Update trade in DB if requested
+            if store_db:
+                db.store_trade(trade)
             state.last_trade_close_times[(trade.strategy_name, trade.symbol)] = last_time
             state.active_trades.remove(trade)
 
