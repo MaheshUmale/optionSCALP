@@ -6,3 +6,4 @@ data_cache/
 .streamlit/
 EOF
 *.db
+optionscalp.db
