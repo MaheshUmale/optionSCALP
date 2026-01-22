@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from data.gathering.tv_feed import TvFeed
+from data.database import DatabaseManager
 from tvDatafeed import Interval
 import math
 from datetime import datetime, timezone, timedelta
@@ -10,6 +11,7 @@ IST_TZ = timezone(timedelta(hours=5, minutes=30))
 class DataManager:
     def __init__(self):
         self.feed = TvFeed()
+        self.db = DatabaseManager()
 
     def get_atm_strike(self, spot_price, step=100):
         return int(round(spot_price / step) * step)
@@ -53,10 +55,16 @@ class DataManager:
         return sym
 
     def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100, reference_date=None):
-        df = None
         # Clean symbol if needed (e.g. remove NSE: prefix for inner searches)
         clean_sym = symbol.replace("NSE:", "")
+        int_str = str(interval)
 
+        # Try DB first
+        df_db = self.db.get_ohlcv(clean_sym, int_str)
+        if not df_db.empty and len(df_db) >= n_bars:
+            return df_db.tail(n_bars)
+
+        df = None
         try:
             # We try fetching with NSE exchange explicitly
             df = self.feed.get_historical_data(clean_sym, exchange="NSE", interval=interval, n_bars=n_bars)
@@ -69,6 +77,9 @@ class DataManager:
                 df.index = df.index.tz_localize('Asia/Kolkata').tz_convert('UTC')
             else:
                 df.index = df.index.tz_convert('UTC')
+
+            # Store in DB
+            self.db.store_ohlcv(clean_sym, int_str, df)
             return df
 
         print(f"Error: Symbol {clean_sym} not found on TradingView. No data available.")
