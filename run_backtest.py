@@ -1,7 +1,7 @@
 import pandas as pd
 import asyncio
 from datetime import datetime
-from main import SessionState, send_replay_step, dm, STRATEGIES
+from main import SessionState, send_replay_step, dm, STRATEGIES, fetch_pcr_insights
 from tvDatafeed import Interval
 from starlette.websockets import WebSocketState
 import json
@@ -27,6 +27,11 @@ async def run_automated_backtest(index_sym="BANKNIFTY", date_str="2026-01-21"):
     if state.replay_data_ce.empty or state.replay_data_pe.empty:
         print("Error: Option data empty")
         return
+
+    # Fetch PCR/Buildup for historical date to make it realistic
+    pcr_res = await fetch_pcr_insights(index_sym, ref_date=ref_date)
+    state.pcr_insights = pcr_res.get('insights', {})
+    state.buildup_history = pcr_res.get('buildup_list', [])
 
     # Mock WebSocket to capture messages
     class MockWS:
