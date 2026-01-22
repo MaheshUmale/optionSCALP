@@ -137,7 +137,17 @@ class UpstoxLiveFeed:
         for item in symbols_with_keys:
             key = item["key"]
             sym = item["symbol"]
-            self.key_to_symbol[key] = sym
+
+            # Uniqueness Check: Ensure we don't map multiple keys to the same symbol
+            # which causes the 'glitch' of jumping prices on the same chart.
+            existing_key = next((k for k, s in self.key_to_symbol.items() if s == sym and k != key), None)
+            if existing_key:
+                logger.warning(f"[UpstoxLiveFeed] Symbol collision: {sym} is already mapped to {existing_key}. Skipping mapping for {key}.")
+                # We still add the key to subscriptions, but we'll use its key as the symbol to avoid mixing
+                self.key_to_symbol[key] = key
+            else:
+                self.key_to_symbol[key] = sym
+
             if key not in self.instrument_keys:
                 self.instrument_keys.append(key)
                 new_keys.append(key)

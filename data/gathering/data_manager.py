@@ -82,9 +82,19 @@ class DataManager:
             print(f"Error downloading Upstox instruments: {e}")
             return pd.DataFrame()
 
-    def get_upstox_instrument_keys(self, symbols=["NIFTY", "BANKNIFTY"], spot_prices={"NIFTY": 0, "BANKNIFTY": 0}):
+    def getNiftyAndBNFnOKeys(self, symbols=["NIFTY", "BANKNIFTY"], spot_prices={"NIFTY": 0, "BANKNIFTY": 0}):
+        """
+        Implementation as per getNiftyAndBNFnOKeys API requirement.
+        Fetches instrument keys for Spot, Future, and Options.
+        """
         df = self.get_upstox_instruments_df()
         if df.empty: return {}
+
+        # Hardcoded Future keys as specified by user
+        KNOWN_FUTURES = {
+            "NIFTY": "NSE_FO|49229",
+            "BANKNIFTY": "NSE_FO|49224"
+        }
 
         full_mapping = {}
         for symbol in symbols:
@@ -92,9 +102,19 @@ class DataManager:
             if not spot: continue
             
             # --- 1. Current Month Future ---
-            fut_df = df[(df['name'] == symbol) & (df['instrument_type'] == 'FUT')].sort_values(by='expiry')
-            if fut_df.empty: continue
-            current_fut_key = fut_df.iloc[0]['instrument_key']
+            current_fut_key = KNOWN_FUTURES.get(symbol)
+            if not current_fut_key:
+                fut_df = df[(df['name'] == symbol) & (df['instrument_type'] == 'FUT')].sort_values(by='expiry')
+                if not fut_df.empty:
+                    current_fut_key = fut_df.iloc[0]['instrument_key']
+
+            current_fut_tsym = ""
+            if current_fut_key:
+                res_f = df[df['instrument_key'] == current_fut_key]
+                if not res_f.empty:
+                    current_fut_tsym = res_f.iloc[0]['trading_symbol']
+                else:
+                    current_fut_tsym = symbol + " FUT"
 
             # --- 2. Nearest Expiry Options ---
             opt_df = df[(df['name'] == symbol) & (df['instrument_type'].isin(['CE', 'PE']))].copy()
@@ -136,6 +156,7 @@ class DataManager:
 
             full_mapping[symbol] = {
                 "future": current_fut_key,
+                "future_trading_symbol": current_fut_tsym,
                 "expiry": nearest_expiry.strftime('%Y-%m-%d') if pd.notnull(nearest_expiry) else None,
                 "options": option_keys,
                 "all_keys": [current_fut_key] + [opt['ce'] for opt in option_keys] + [opt['pe'] for opt in option_keys]
@@ -144,22 +165,23 @@ class DataManager:
 
     def get_upstox_key_for_tv_symbol(self, tv_symbol):
         """
-        Maps a TradingView symbol like 'NSE:NIFTY260127C25250' to Upstox instrument key.
+        Maps a TradingView symbol or Upstox Trading Symbol to Upstox instrument key.
         """
         df = self.get_upstox_instruments_df()
         if df.empty: return None
 
+        # Fixed Spot Keys as per user instruction
         if tv_symbol in ["NSE:NIFTY", "NIFTY"]: return "NSE_INDEX|Nifty 50"
         if tv_symbol in ["NSE:BANKNIFTY", "BANKNIFTY"]: return "NSE_INDEX|Nifty Bank"
 
-        # Handle Futures
-        if "-FUT" in tv_symbol:
-            base = tv_symbol.replace("NSE:", "").replace("-FUT", "")
-            fut_df = df[(df["name"] == base) & (df["instrument_type"] == "FUT")].sort_values(by="expiry")
-            if not fut_df.empty:
-                return fut_df.iloc[0]["instrument_key"]
-
         clean_sym = tv_symbol.replace("NSE:", "")
+
+        # 1. Try matching against 'trading_symbol' directly (for Futures and Options)
+        res = df[df['trading_symbol'] == clean_sym]
+        if not res.empty:
+            return res.iloc[0]['instrument_key']
+
+        # 2. Try TV Option Symbol format parsing: (INDEX)(YYMMDD)(C/P)(STRIKE)
         match = re.match(r"([A-Z]+)(\d{6})([CP])(\d+)", clean_sym)
         if match:
             name, expiry_short, opt_type, strike = match.groups()
@@ -182,7 +204,6 @@ class DataManager:
                 
                 if not res.empty:
                     return res.iloc[0]['instrument_key']
-                return opt_df.iloc[0]['instrument_key'] # Fallback to first found if expiry doesn't match perfectly
 
         return None
 

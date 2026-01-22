@@ -243,7 +243,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         
                         # Use Upstox specific mapping
                         spot_prices = {index_sym: idx_df['close'].iloc[-1]}
-                        upstox_mapping = dm.get_upstox_instrument_keys([index_sym], spot_prices)
+                        upstox_mapping = dm.getNiftyAndBNFnOKeys([index_sym], spot_prices)
                         
                         if index_sym in upstox_mapping:
                             mapping = upstox_mapping[index_sym]
@@ -252,24 +252,35 @@ async def websocket_endpoint(websocket: WebSocket):
                             if index_sym == "NIFTY": all_keys.append("NSE_INDEX|Nifty 50")
                             elif index_sym == "BANKNIFTY": all_keys.append("NSE_INDEX|Nifty Bank")
                             
+                            # Sync CE/PE symbols in state to match the real Upstox Trading Symbols for perfect live matching
+                            for opt in mapping.get('options', []):
+                                if opt['strike'] == strike:
+                                    state.ce_sym = f"NSE:{opt['ce_trading_symbol']}"
+                                    state.pe_sym = f"NSE:{opt['pe_trading_symbol']}"
+                                    break
+
                             symbols_with_keys = []
                             for k in list(set(all_keys)):
-                                # We need to map these back to TV symbols for the UI/Strategy
+                                # Priority 1: Fixed Spot Mapping
                                 if k == "NSE_INDEX|Nifty 50": sym = "NSE:NIFTY"
                                 elif k == "NSE_INDEX|Nifty Bank": sym = "NSE:BANKNIFTY"
-                                elif k == mapping.get('future'): sym = f"NSE:{index_sym}-FUT"
+                                # Priority 2: Future Mapping
+                                elif k == mapping.get('future'):
+                                    sym = f"NSE:{mapping.get('future_trading_symbol', k)}"
+                                # Priority 3: Options Mapping
                                 else:
-                                    # For options, we might need a better way to find the TV symbol
-                                    # but for the main CE/PE it's already in state
-                                    sym = k # Default to key if unknown
-                                    
-                                    # Check main options
+                                    found_opt = False
                                     for opt in mapping.get('options', []):
                                         if k == opt['ce']:
-                                            # Re-generate TV symbol for this strike
-                                            sym = f"NSE:{dm.get_option_symbol(index_sym, opt['strike'], 'C')}"
+                                            sym = f"NSE:{opt['ce_trading_symbol']}"
+                                            found_opt = True
+                                            break
                                         elif k == opt['pe']:
-                                            sym = f"NSE:{dm.get_option_symbol(index_sym, opt['strike'], 'P')}"
+                                            sym = f"NSE:{opt['pe_trading_symbol']}"
+                                            found_opt = True
+                                            break
+                                    if not found_opt:
+                                        sym = k # Fallback
                                 
                                 symbols_with_keys.append({"symbol": sym, "key": k})
                             
@@ -379,8 +390,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         live_feed = feed_manager.get_upstox_feed(config.ACCESS_TOKEN)
                         inst_key = dm.get_upstox_key_for_tv_symbol(sub_sym)
                         if inst_key:
+                             # Resolve the actual trading symbol from the master to ensure consistency
+                             # If sub_sym is NSE:NIFTY, it maps to NSE_INDEX|Nifty 50.
+                             # If we add_symbols with sub_sym as the display name, it will be used in updates.
                              live_feed.add_symbols([{"symbol": sub_sym, "key": inst_key}])
                         else:
+                             # Fallback: use sub_sym as both if not found in master
                              live_feed.add_symbols([{"symbol": sub_sym, "key": sub_sym}])
                     else:
                         live_feed = feed_manager.get_tv_feed()
@@ -1042,10 +1057,10 @@ async def handle_live_update(websocket, state, update):
                 try:
                     # Get next expiry for Upstox
                     spot_prices = {clean_symbol: update['price']}
-                    upstox_mapping = dm.get_upstox_instrument_keys([clean_symbol], spot_prices)
+                    upstox_mapping = dm.getNiftyAndBNFnOKeys([clean_symbol], spot_prices)
                     if clean_symbol in upstox_mapping:
                         expiry_date = upstox_mapping[clean_symbol]['expiry']
-                        instrument_key = dm.get_upstox_key_for_tv_symbol(symbol)
+                        instrument_key = dm.get_upstox_key_for_tv_symbol(prefixed_symbol)
                         if instrument_key:
                             option_chain_res = state.upstox_client.get_put_call_option_chain(instrument_key, expiry_date)
                             if option_chain_res and option_chain_res.status == 'success':
