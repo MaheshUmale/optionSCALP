@@ -60,13 +60,12 @@ class UpstoxLiveFeed:
                     if total_volume is not None:
                         total_volume = float(total_volume)
 
-                    # Use timestamp from feed if available (in milliseconds)
-                    # ltt is inside ltpc, ts is at root of marketFF
-                    ts_ms = ltt or market_ff.get("ts")
+                    # Use feed timestamp for current tick time (more accurate for bucket alignment)
+                    ts_ms = market_ff.get("ts") or ltt
                     if ts_ms:
                         ts = float(ts_ms) / 1000
                     else:
-                        ts = datetime.now().timestamp()
+                        ts = datetime.now(timezone.utc).timestamp()
 
                     display_symbol = self.key_to_symbol.get(key, key)
 
