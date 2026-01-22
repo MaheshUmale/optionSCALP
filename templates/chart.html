@@ -24,6 +24,7 @@
         document.getElementById('symbol-display').innerText = symbol || "No Symbol";
 
         let chart, series, volSeries;
+        let markers = [];
 
         function initChart() {
             chart = LightweightCharts.createChart(document.getElementById('full-chart'), {
@@ -70,8 +71,10 @@
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
+            const cleanSymbol = symbol ? symbol.replace("NSE:", "") : "";
+            const cleanDataSymbol = data.symbol ? data.symbol.replace("NSE:", "") : "";
 
-            if (data.type === 'history_data' && (data.symbol === symbol || symbol.includes(data.symbol))) {
+            if (data.type === 'history_data' && (data.symbol === symbol || cleanDataSymbol === cleanSymbol)) {
                 series.setData(data.data.map(d => ({
                     time: d.time, open: d.open, high: d.high, low: d.low, close: d.close
                 })));
@@ -81,7 +84,7 @@
                 chart.timeScale().fitContent();
             }
 
-            if (data.type === 'live_update' && (data.symbol === symbol || symbol.includes(data.symbol))) {
+            if (data.type === 'live_update' && (data.symbol === symbol || cleanDataSymbol === cleanSymbol)) {
                 series.update(data.candle);
                 volSeries.update({
                     time: data.candle.time,
@@ -91,12 +94,30 @@
                 document.getElementById('price-info').innerText = `LTP: ${data.candle.close.toFixed(2)}`;
             }
 
+            if (data.type === 'marker_update' && (data.symbol === symbol || cleanDataSymbol === cleanSymbol)) {
+                markers.push(data.marker);
+                series.setMarkers(markers);
+            }
+
             // Handle historical data if needed
             if ((data.type === 'live_data' || data.type === 'replay_step')) {
                 let relevantData = null;
-                if (data.ce_symbol === symbol || symbol.includes(data.ce_symbol)) relevantData = data.ce_data;
-                else if (data.pe_symbol === symbol || symbol.includes(data.pe_symbol)) relevantData = data.pe_data;
-                else if (data.index_symbol === symbol || symbol.includes(data.index_symbol)) relevantData = data.index_data;
+                let relevantMarkers = null;
+                const cleanCE = data.ce_symbol ? data.ce_symbol.replace("NSE:", "") : "";
+                const cleanPE = data.pe_symbol ? data.pe_symbol.replace("NSE:", "") : "";
+                const cleanIdx = data.index_symbol ? data.index_symbol.replace("NSE:", "") : "";
+
+                if (data.ce_symbol === symbol || cleanCE === cleanSymbol) {
+                    relevantData = data.ce_data;
+                    relevantMarkers = data.ce_markers;
+                }
+                else if (data.pe_symbol === symbol || cleanPE === cleanSymbol) {
+                    relevantData = data.pe_data;
+                    relevantMarkers = data.pe_markers;
+                }
+                else if (data.index_symbol === symbol || cleanIdx === cleanSymbol) {
+                    relevantData = data.index_data;
+                }
 
                 if (relevantData) {
                     series.setData(relevantData.map(d => ({
@@ -106,6 +127,10 @@
                         time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
                     })));
                     chart.timeScale().fitContent();
+                }
+                if (relevantMarkers) {
+                    markers = relevantMarkers;
+                    series.setMarkers(markers);
                 }
             }
         };

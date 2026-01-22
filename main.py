@@ -98,6 +98,9 @@ class SessionState:
         self.pcr_insights = None
         self.upstox_client = None
         self.websocket = None
+        self.subscribed_symbols = set()
+        self.last_subscribed_candle = {} # symbol -> candle
+        self.subscribed_history = {} # symbol -> list of candles
 
 @app.get("/", response_class=HTMLResponse)
 async def get_live(request: Request):
@@ -177,16 +180,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     ce_recs = format_records(ce_df)
                     pe_recs = format_records(pe_df)
 
-                    state.idx_history = idx_recs[-100:]
-                    state.ce_history = ce_recs[-100:]
-                    state.pe_history = pe_recs[-100:]
+                    state.idx_history = idx_recs[-100:] if idx_recs else []
+                    state.ce_history = ce_recs[-100:] if ce_recs else []
+                    state.pe_history = pe_recs[-100:] if pe_recs else []
 
                     state.ce_markers = []
                     state.pe_markers = []
 
-                    state.last_idx_candle = idx_recs[-1]
-                    state.last_ce_candle = ce_recs[-1]
-                    state.last_pe_candle = pe_recs[-1]
+                    state.last_idx_candle = idx_recs[-1] if idx_recs else None
+                    state.last_ce_candle = ce_recs[-1] if ce_recs else None
+                    state.last_pe_candle = pe_recs[-1] if pe_recs else None
 
                     # Pre-calculate historical signals for the chart
                     # Step every 5 bars to speed up initial load, or just check last 300 bars
@@ -364,6 +367,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif data['type'] == 'subscribe_symbol':
                     sub_sym = data['symbol']
+                    clean_sub_sym = sub_sym.replace("NSE:", "")
+                    state.subscribed_symbols.add(clean_sub_sym)
                     logger.info(f"Subscription requested for {sub_sym}")
                     feed_manager.subscribe(live_callback)
 
@@ -383,10 +388,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     hist_df = dm.get_data(sub_sym, interval=Interval.in_1_minute, n_bars=300)
                     if not hist_df.empty:
                         hist_df = hist_df.between_time('03:45', '10:00')
+                        recs = format_records(hist_df)
+
+                        # Seed last candle for live updates
+                        if recs:
+                            state.last_subscribed_candle[clean_sub_sym] = recs[-1]
+                            state.subscribed_history[clean_sub_sym] = recs[-100:]
+
                         await websocket.send_json(clean_json({
                             "type": "history_data",
                             "symbol": sub_sym,
-                            "data": format_records(hist_df)
+                            "data": recs
                         }))
 
         except Exception as e:
@@ -847,6 +859,7 @@ async def handle_live_setup(setup, strat, is_ce, is_pe, state, websocket, target
         await websocket.send_json(clean_json({
             "type": "marker_update", "is_ce": not is_pe_t,
             "is_pe": is_pe_t,
+            "symbol": symbol,
             "marker": marker, "signal": setup
         }))
 
@@ -857,8 +870,9 @@ async def handle_live_update(websocket, state, update):
     is_index = clean_symbol == state.index_sym
     is_ce = clean_symbol == state.ce_sym
     is_pe = clean_symbol == state.pe_sym
+    is_subscribed = clean_symbol in state.subscribed_symbols
 
-    if not (is_index or is_ce or is_pe): return
+    if not (is_index or is_ce or is_pe or is_subscribed): return
 
     # Volume handling
     current_total_volume = update.get('volume')
@@ -885,7 +899,9 @@ async def handle_live_update(websocket, state, update):
 
     if is_index: target_candle = state.last_idx_candle
     elif is_ce: target_candle = state.last_ce_candle
-    else: target_candle = state.last_pe_candle
+    elif is_pe: target_candle = state.last_pe_candle
+    elif is_subscribed: target_candle = state.last_subscribed_candle.get(clean_symbol)
+    else: target_candle = None
 
     # Handle broker OHLC correction for COMPLETED candles (I1 is strictly the prior minute)
     if update.get('ohlc'):
@@ -893,7 +909,12 @@ async def handle_live_update(websocket, state, update):
         u_ts = (int(u_ohlc.get('ts', 0)) // 1000) + 19800
 
         # Update history with finalized broker data
-        history = state.idx_history if is_index else (state.ce_history if is_ce else state.pe_history)
+        if is_index: history = state.idx_history
+        elif is_ce: history = state.ce_history
+        elif is_pe: history = state.pe_history
+        elif is_subscribed: history = state.subscribed_history.get(clean_symbol, [])
+        else: history = []
+
         for h_candle in reversed(history[-5:]): # Check last few candles
             if h_candle['time'] == u_ts:
                 h_candle['open'] = u_ohlc.get('open', h_candle['open'])
@@ -918,14 +939,19 @@ async def handle_live_update(websocket, state, update):
             # Store completed candle in DB
             db.store_ohlcv(clean_symbol, "Interval.in_1_minute", pd.DataFrame([target_candle]))
 
-            if is_index: state.idx_history.append(target_candle)
-            elif is_ce: state.ce_history.append(target_candle)
-            elif is_pe: state.pe_history.append(target_candle)
-
-            # Keep only last 100 for strategy
-            if len(state.idx_history) > 100: state.idx_history.pop(0)
-            if len(state.ce_history) > 100: state.ce_history.pop(0)
-            if len(state.pe_history) > 100: state.pe_history.pop(0)
+            if is_index:
+                state.idx_history.append(target_candle)
+                if len(state.idx_history) > 100: state.idx_history.pop(0)
+            elif is_ce:
+                state.ce_history.append(target_candle)
+                if len(state.ce_history) > 100: state.ce_history.pop(0)
+            elif is_pe:
+                state.pe_history.append(target_candle)
+                if len(state.pe_history) > 100: state.pe_history.pop(0)
+            elif is_subscribed:
+                if clean_symbol not in state.subscribed_history: state.subscribed_history[clean_symbol] = []
+                state.subscribed_history[clean_symbol].append(target_candle)
+                if len(state.subscribed_history[clean_symbol]) > 100: state.subscribed_history[clean_symbol].pop(0)
 
             # Check for strategy setup on closed candle (Unified & Segregated)
             if (is_ce or is_pe) and len(state.idx_history) > 20:
@@ -992,7 +1018,8 @@ async def handle_live_update(websocket, state, update):
         }
         if is_index: state.last_idx_candle = new_candle
         elif is_ce: state.last_ce_candle = new_candle
-        else: state.last_pe_candle = new_candle
+        elif is_pe: state.last_pe_candle = new_candle
+        elif is_subscribed: state.last_subscribed_candle[clean_symbol] = new_candle
         target_candle = new_candle
 
         # Every new candle, also refresh Trendlyne signals and PCR if in live mode
