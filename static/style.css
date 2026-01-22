@@ -57,13 +57,19 @@ body {
 
 .popout-link {
     text-decoration: none;
-    color: #2962ff;
-    font-size: 14px;
+    color: #fff;
+    font-size: 10px;
+    background: #2962ff;
+    padding: 2px 6px;
+    border-radius: 3px;
     margin-left: 10px;
+    font-weight: normal;
+    text-transform: uppercase;
 }
 
 .popout-link:hover {
-    color: #448aff;
+    background: #448aff;
+    color: #fff;
 }
 
 .chart-box {

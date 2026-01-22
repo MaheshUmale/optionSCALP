@@ -187,6 +187,10 @@ ws.onmessage = (event) => {
             peChart.timeScale().fitContent();
         }
 
+        if (data.index_symbol || data.index_data) {
+             const sym = data.index_symbol || document.getElementById('index-select').value;
+             document.getElementById('index-popout').href = `/chart?symbol=${sym}`;
+        }
         if (data.ce_symbol) {
             document.getElementById('ce-label').querySelector('span').innerText = `CE OPTION: ${data.ce_symbol}`;
             document.getElementById('ce-popout').href = `/chart?symbol=${data.ce_symbol}`;
