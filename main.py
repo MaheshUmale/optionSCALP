@@ -15,7 +15,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from data.gathering.data_manager import DataManager
-from data.gathering.mongo_data_manager import MongoDataManager
 from data.gathering.feed_manager import feed_manager
 from data.gathering.upstoxAPIAccess import UpstoxClient
 import config
@@ -55,7 +54,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 dm = DataManager()
-mongo_dm = MongoDataManager()
 db = DatabaseManager()
 tl_client = TrendlyneClient()
 tl_adv = TrendlyneScalper()
@@ -389,64 +387,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json({
                         "type": "replay_info",
                         "max_idx": min(len(state.replay_data_ce), len(state.replay_data_pe)),
-                        "current_idx": state.replay_idx
-                    })
-                    await send_replay_step(websocket, state)
-
-                elif data['type'] == 'start_mongo_backtest':
-                    logger.info(f"Starting Mongo Backtest for {data['index_key']} on {data['date']}")
-                    state.active_trades = []
-                    state.pnl_tracker = PnLTracker()
-                    state.ce_markers = []
-                    state.pe_markers = []
-                    await websocket.send_json({"type": "reset_ui"})
-
-                    index_key = data['index_key']
-                    ce_key = data.get('ce_key')
-                    pe_key = data.get('pe_key')
-                    date_str = data['date']
-
-                    # If option keys not provided, try to find them
-                    if not ce_key or not pe_key:
-                         keys = mongo_dm.get_available_keys(date_str)
-                         # Logic to guess CE/PE keys if not provided could be complex
-                         # For now, expect them or let it fail
-
-                    state.index_sym = index_key
-                    state.ce_sym = ce_key or ""
-                    state.pe_sym = pe_key or ""
-
-                    # Fetch tick data
-                    idx_ticks = mongo_dm.get_tick_data(index_key, date_str)
-                    ce_ticks = mongo_dm.get_tick_data(ce_key, date_str) if ce_key else pd.DataFrame()
-                    pe_ticks = mongo_dm.get_tick_data(pe_key, date_str) if pe_key else pd.DataFrame()
-
-                    if idx_ticks.empty:
-                        await websocket.send_json({"type": "error", "message": "No index ticks found in Mongo."})
-                        continue
-
-                    # Create candles from ticks for strategy
-                    idx_candles = mongo_dm.ticks_to_candles(idx_ticks)
-                    ce_candles = mongo_dm.ticks_to_candles(ce_ticks)
-                    pe_candles = mongo_dm.ticks_to_candles(pe_ticks)
-
-                    # Align DataFrames
-                    aligned = mongo_dm.align_dataframes([idx_candles, ce_candles, pe_candles])
-                    state.replay_data_idx = aligned[0]
-                    state.replay_data_ce = aligned[1]
-                    state.replay_data_pe = aligned[2]
-
-                    # We will also store ticks for fine-grained SL/Target checking
-                    state.idx_ticks = idx_ticks
-                    state.ce_ticks = ce_ticks
-                    state.pe_ticks = pe_ticks
-
-                    state.replay_idx = 20 # Start after some history
-                    state.is_playing = True
-
-                    await websocket.send_json({
-                        "type": "replay_info",
-                        "max_idx": len(state.replay_data_idx),
                         "current_idx": state.replay_idx
                     })
                     await send_replay_step(websocket, state)
@@ -1246,65 +1186,26 @@ def handle_new_trade(state, strategy_name, symbol, setup, time, store=True, stor
 
 def check_trade_exits(state, sub_idx, sub_ce, sub_pe, store_db=True):
     for trade in state.active_trades[:]:
-        # Choose appropriate tick data or candle data
-        ticks = None
-        df = None
-
-        if trade.symbol == state.ce_sym:
-            ticks = getattr(state, 'ce_ticks', None)
-            df = sub_ce
-        elif trade.symbol == state.pe_sym:
-            ticks = getattr(state, 'pe_ticks', None)
-            df = sub_pe
-        else:
-            ticks = getattr(state, 'idx_ticks', None)
-            df = sub_idx
-
+        df = sub_ce if trade.symbol == state.ce_sym else (sub_pe if trade.symbol == state.pe_sym else sub_idx)
         if df.empty: continue
 
-        last_candle_time = int(df.index[-1].timestamp())
-
-        # Fine-grained check if ticks are available
-        if ticks is not None and not ticks.empty:
-            # Get ticks for the current candle minute
-            # Note: ticks['time'] is in seconds
-            current_ticks = ticks[(ticks['time'] >= last_candle_time) & (ticks['time'] < last_candle_time + 60)]
-
-            trade_closed_in_tick = False
-            for _, tick in current_ticks.iterrows():
-                last_price = tick['price']
-                last_time = int(tick['time']) + 19800
-
-                closed, exit_price, reason = evaluate_exit(trade, last_price)
-                if closed:
-                    trade.close(exit_price, last_time, reason)
-                    db.store_trade(trade)
-                    state.last_trade_close_times[(trade.strategy_name, trade.symbol)] = last_time
-                    state.active_trades.remove(trade)
-                    trade_closed_in_tick = True
-                    break # Stop checking ticks for THIS trade
-            if trade_closed_in_tick:
-                continue # Move to NEXT trade
-
-        # Fallback to candle OHLC if no ticks or not closed yet
         last_price = df['close'].iloc[-1]
         last_time = int(df.index[-1].timestamp()) + 19800
 
-        # Check OHLC for SL/Target breach (High/Low)
+        closed = False
+        exit_price = 0
+        reason = ""
+
         if trade.trade_type == 'LONG':
-            if trade.sl and df['low'].iloc[-1] <= trade.sl:
+            if trade.sl and last_price <= trade.sl:
                 closed, exit_price, reason = True, trade.sl, 'SL'
-            elif trade.target and df['high'].iloc[-1] >= trade.target:
+            elif trade.target and last_price >= trade.target:
                 closed, exit_price, reason = True, trade.target, 'TARGET'
-            else:
-                closed = False
-        else:
-            if trade.sl and df['high'].iloc[-1] >= trade.sl:
+        else: # SHORT
+            if trade.sl and last_price >= trade.sl:
                 closed, exit_price, reason = True, trade.sl, 'SL'
-            elif trade.target and df['low'].iloc[-1] <= trade.target:
+            elif trade.target and last_price <= trade.target:
                 closed, exit_price, reason = True, trade.target, 'TARGET'
-            else:
-                closed = False
 
         if closed:
             trade.close(exit_price, last_time, reason)
@@ -1313,19 +1214,6 @@ def check_trade_exits(state, sub_idx, sub_ce, sub_pe, store_db=True):
                 db.store_trade(trade)
             state.last_trade_close_times[(trade.strategy_name, trade.symbol)] = last_time
             state.active_trades.remove(trade)
-
-def evaluate_exit(trade, current_price):
-    if trade.trade_type == 'LONG':
-        if trade.sl and current_price <= trade.sl:
-            return True, trade.sl, 'SL'
-        elif trade.target and current_price >= trade.target:
-            return True, trade.target, 'TARGET'
-    else:
-        if trade.sl and current_price >= trade.sl:
-            return True, trade.sl, 'SL'
-        elif trade.target and current_price <= trade.target:
-            return True, trade.target, 'TARGET'
-    return False, 0, ""
 
 if __name__ == "__main__":
     uvicorn.run(app, host="localhost", port=8000)

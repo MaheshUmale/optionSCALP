@@ -10,25 +10,12 @@
     <div class="top-bar">
         <div class="brand">OptionScalp Pro</div>
         <div class="controls">
-            <div id="standard-replay-controls">
-                <select id="index-select">
-                    <option value="BANKNIFTY">BANKNIFTY</option>
-                    <option value="NIFTY">NIFTY</option>
-                </select>
-                <input type="date" id="replay-date" value="2026-01-21" style="background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px; margin: 0 5px;">
-                <button onclick="startReplay()" class="btn-replay">Start Replay</button>
-                <button onclick="toggleMongoUI()" style="margin-left: 10px;">Mongo Replay</button>
-            </div>
-
-            <div id="mongo-replay-controls" style="display: none;">
-                <input type="text" id="mongo-idx" placeholder="Index Key (NSE_INDEX|...)" style="background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px; margin: 0 5px; width: 150px;">
-                <input type="text" id="mongo-ce" placeholder="CE Key" style="background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px; margin: 0 5px; width: 100px;">
-                <input type="text" id="mongo-pe" placeholder="PE Key" style="background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px; margin: 0 5px; width: 100px;">
-                <input type="date" id="mongo-date" value="2026-01-22" style="background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px; margin: 0 5px;">
-                <button onclick="startMongoReplay()" class="btn-replay">Run Mongo</button>
-                <button onclick="toggleMongoUI()" style="margin-left: 10px;">Standard</button>
-            </div>
-
+            <select id="index-select">
+                <option value="BANKNIFTY">BANKNIFTY</option>
+                <option value="NIFTY">NIFTY</option>
+            </select>
+            <input type="date" id="replay-date" value="2026-01-21" style="background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px; margin: 0 5px;">
+            <button onclick="startReplay()" class="btn-replay">Start Replay</button>
             <button onclick="pauseReplay()">Pause</button>
             <button onclick="stepReplay()">Step</button>
             <select id="speed-select" onchange="setReplaySpeed(this.value)" style="margin-left: 10px; background: #2b2b3b; color: white; border: 1px solid #444; border-radius: 4px; padding: 2px 5px;">

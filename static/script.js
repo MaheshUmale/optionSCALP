@@ -110,7 +110,11 @@ function initCharts() {
             if (!range || isSyncing) return;
             isSyncing = true;
             others.forEach(c => {
-                c.timeScale().setVisibleRange(range);
+                try {
+                    c.timeScale().setVisibleRange(range);
+                } catch (e) {
+                    // Ignore errors during initialization when some charts might not have data yet
+                }
             });
             isSyncing = false;
         });
@@ -200,18 +204,22 @@ ws.onmessage = (event) => {
 
         if (data.index_symbol || data.index_data) {
              const sym = data.index_symbol || document.getElementById('index-select').value;
-             document.getElementById('index-popout').href = `/chart?symbol=${sym}`;
-             if (document.getElementById('label-index')) document.getElementById('label-index').innerText = `INDEX: ${sym}`;
+             const popout = document.getElementById('index-popout');
+             if (popout) popout.href = `/chart?symbol=${sym}`;
+             const label = document.getElementById('label-index');
+             if (label) label.innerText = `INDEX: ${sym}`;
         }
         if (data.ce_symbol) {
             const label = document.getElementById('label-ce') || (document.getElementById('ce-label') ? document.getElementById('ce-label').querySelector('span') : null);
             if (label) label.innerText = `CE OPTION: ${data.ce_symbol}`;
-            document.getElementById('ce-popout').href = `/chart?symbol=${data.ce_symbol}`;
+            const popout = document.getElementById('ce-popout');
+            if (popout) popout.href = `/chart?symbol=${data.ce_symbol}`;
         }
         if (data.pe_symbol) {
             const label = document.getElementById('label-pe') || (document.getElementById('pe-label') ? document.getElementById('pe-label').querySelector('span') : null);
             if (label) label.innerText = `PE OPTION: ${data.pe_symbol}`;
-            document.getElementById('pe-popout').href = `/chart?symbol=${data.pe_symbol}`;
+            const popout = document.getElementById('pe-popout');
+            if (popout) popout.href = `/chart?symbol=${data.pe_symbol}`;
         }
         if (data.new_signals) {
             data.new_signals.forEach(sig => updateSignal(sig));
@@ -360,29 +368,6 @@ function startReplay() {
         date: document.getElementById('replay-date') ? document.getElementById('replay-date').value : null
     }));
 }
-
-function toggleMongoUI() {
-    const std = document.getElementById('standard-replay-controls');
-    const mongo = document.getElementById('mongo-replay-controls');
-    if (std.style.display === 'none') {
-        std.style.display = 'block';
-        mongo.style.display = 'none';
-    } else {
-        std.style.display = 'none';
-        mongo.style.display = 'block';
-    }
-}
-
-function startMongoReplay() {
-    ws.send(JSON.stringify({
-        type: 'start_mongo_backtest',
-        index_key: document.getElementById('mongo-idx').value,
-        ce_key: document.getElementById('mongo-ce').value,
-        pe_key: document.getElementById('mongo-pe').value,
-        date: document.getElementById('mongo-date').value
-    }));
-}
-
 function pauseReplay() { ws.send(JSON.stringify({ type: 'pause_replay' })); }
 function stepReplay() { ws.send(JSON.stringify({ type: 'step_replay' })); }
 function setReplaySpeed(val) { ws.send(JSON.stringify({ type: 'set_replay_speed', speed: parseFloat(val) })); }
