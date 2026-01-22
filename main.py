@@ -15,8 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from data.gathering.data_manager import DataManager
-from data.gathering.live_feed import TradingViewLiveFeed
-from data.gathering.upstox_feed import UpstoxLiveFeed
+from data.gathering.feed_manager import feed_manager
 from data.gathering.upstoxAPIAccess import UpstoxClient
 import config
 from data.database import DatabaseManager
@@ -30,8 +29,26 @@ delta_strategy = DeltaVolumeStrategy()
 from trendlyne_client import TrendlyneClient
 from trendlyneAdvClient import TrendlyneScalper
 from tvDatafeed import Interval
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    use_upstox = hasattr(config, 'ACCESS_TOKEN') and config.ACCESS_TOKEN != "YOUR_ACCESS_TOKEN"
+    if use_upstox:
+        logger.info("Pre-starting Upstox feed at startup")
+        feed_manager.get_upstox_feed(config.ACCESS_TOKEN)
+    else:
+        logger.info("Pre-starting TradingView feed at startup")
+        feed_manager.get_tv_feed()
+    yield
+    # Shutdown logic
+    if feed_manager.upstox_feed:
+        feed_manager.upstox_feed.stop()
+    if feed_manager.tv_feed:
+        feed_manager.tv_feed.stop()
+
+app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -70,7 +87,6 @@ class SessionState:
         self.is_live = False
         self.ce_markers = []
         self.pe_markers = []
-        self.live_feed = None
         self.last_idx_candle = None
         self.last_ce_candle = None
         self.last_pe_candle = None
@@ -80,6 +96,7 @@ class SessionState:
         self.last_total_volumes = {} # Track cumulative volumes to calculate deltas
         self.pcr_insights = None
         self.upstox_client = None
+        self.websocket = None
 
 @app.get("/", response_class=HTMLResponse)
 async def get_live(request: Request):
@@ -98,6 +115,11 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("WebSocket accepted")
     state = SessionState()
+    state.websocket = websocket
+    loop = asyncio.get_running_loop()
+
+    def live_callback(update):
+        asyncio.run_coroutine_threadsafe(handle_live_update(state.websocket, state, update), loop)
 
     async def listen_task():
         logger.info("Listen task started")
@@ -201,15 +223,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         "pcr_insights": state.pcr_insights
                     }))
 
-                    if state.live_feed: state.live_feed.stop()
-                    loop = asyncio.get_running_loop()
+                    feed_manager.subscribe(live_callback)
 
                     # Check if Upstox is configured
                     use_upstox = hasattr(config, 'ACCESS_TOKEN') and config.ACCESS_TOKEN != "YOUR_ACCESS_TOKEN"
                     
                     if use_upstox:
                         logger.info("Using Upstox for Live Feed")
-                        state.live_feed = UpstoxLiveFeed(config.ACCESS_TOKEN, lambda u: asyncio.run_coroutine_threadsafe(handle_live_update(websocket, state, u), loop))
+                        live_feed = feed_manager.get_upstox_feed(config.ACCESS_TOKEN)
                         state.upstox_client = UpstoxClient(config.ACCESS_TOKEN)
                         
                         # Use Upstox specific mapping
@@ -244,22 +265,20 @@ async def websocket_endpoint(websocket: WebSocket):
                                 
                                 symbols_with_keys.append({"symbol": sym, "key": k})
                             
-                            state.live_feed.start()
-                            state.live_feed.add_symbols(symbols_with_keys)
+                            live_feed.add_symbols(symbols_with_keys)
                         else:
                             logger.error("Failed to get Upstox instrument keys, falling back to TradingView")
                             use_upstox = False
 
                     if not use_upstox:
                         logger.info("Using TradingView for Live Feed")
-                        state.live_feed = TradingViewLiveFeed(lambda u: asyncio.run_coroutine_threadsafe(handle_live_update(websocket, state, u), loop))
+                        live_feed = feed_manager.get_tv_feed()
                         symbols = [f"NSE:{index_sym}", f"NSE:{state.ce_sym}", f"NSE:{state.pe_sym}"]
                         step = 100 if "BANK" in index_sym else 50
                         for offset in [-100, 100]:
                             for ot in ["C", "P"]:
                                 symbols.append(f"NSE:{dm.get_option_symbol(index_sym, strike + offset, ot)}")
-                        state.live_feed.start()
-                        state.live_feed.add_symbols(list(set(symbols)))
+                        live_feed.add_symbols(list(set(symbols)))
 
                 elif data['type'] == 'start_replay':
                     logger.info(f"Starting replay for {data['index']} at {data.get('date', 'now')}")
@@ -338,6 +357,25 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif data['type'] == 'set_replay_speed':
                     state.replay_speed = float(data['speed'])
+
+                elif data['type'] == 'subscribe_symbol':
+                    sub_sym = data['symbol']
+                    logger.info(f"Subscription requested for {sub_sym}")
+                    feed_manager.subscribe(live_callback)
+
+                    use_upstox = hasattr(config, 'ACCESS_TOKEN') and config.ACCESS_TOKEN != "YOUR_ACCESS_TOKEN"
+                    if use_upstox:
+                        live_feed = feed_manager.get_upstox_feed(config.ACCESS_TOKEN)
+                        # We might need the key if it's not already known, but for simplicity:
+                        if "|" in sub_sym: # Likely already a key
+                             live_feed.add_symbols([{"symbol": sub_sym, "key": sub_sym}])
+                        else:
+                             # Try to guess or just add as is
+                             live_feed.add_symbols([{"symbol": sub_sym, "key": sub_sym}])
+                    else:
+                        live_feed = feed_manager.get_tv_feed()
+                        live_feed.add_symbols([sub_sym])
+
         except Exception as e:
             logger.exception("Listen Error")
 
@@ -358,8 +396,7 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         await asyncio.gather(listen_task(), replay_loop())
     finally:
-        if state.live_feed:
-            state.live_feed.stop()
+        feed_manager.unsubscribe(live_callback)
 
 def is_within_trading_window(ts_utc):
     """

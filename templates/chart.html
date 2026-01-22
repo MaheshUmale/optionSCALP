@@ -58,8 +58,7 @@
         const ws = new WebSocket(`ws://${window.location.host}/ws`);
         ws.onopen = () => {
             if (symbol) {
-                // We might need a specific message to subscribe to just one symbol
-                // For now, we'll just listen to live_updates if they match
+                ws.send(JSON.stringify({ type: 'subscribe_symbol', symbol: symbol }));
             }
         };
 
