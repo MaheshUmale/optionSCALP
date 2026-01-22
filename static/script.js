@@ -13,7 +13,7 @@ function initCharts() {
             borderColor: '#2b2b3b',
             timeVisible: true,
             secondsVisible: false,
-            rightOffset: 20,
+            rightOffset: 10,
             tickMarkFormatter: (time, tickMarkType, locale) => {
                 const date = new Date(time * 1000);
                 const h = String(date.getUTCHours()).padStart(2, '0');

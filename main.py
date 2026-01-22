@@ -325,6 +325,7 @@ def format_records(df):
     return recs.to_dict(orient='records')
 
 def normalize_buildup(status):
+    if not status: return "NEUTRAL"
     s = str(status).upper()
     if "LONG BUILD" in s: return "LONG BUILD"
     if "SHORT COVER" in s: return "SHORT COVER"
@@ -334,13 +335,14 @@ def normalize_buildup(status):
 
 def get_buildup_for_time(buildup_history, current_time):
     """
-    Parses buildup_history (list of ['9:15 TO 9:20', 'Status', ...])
-    to find the one matching current_time (datetime or timestamp).
+    Parses buildup_history to find the one matching current_time.
+    Supports both list-of-lists and list-of-dicts formats from Trendlyne.
     """
     if not buildup_history: return "NEUTRAL"
 
     if isinstance(current_time, (int, float)):
         # Convert shifted IST timestamp back to naive datetime for matching
+        # Note: shifted timestamp is IST as UTC, so utcfromtimestamp gives IST digits
         dt = datetime.utcfromtimestamp(current_time)
     else:
         dt = current_time
@@ -348,16 +350,25 @@ def get_buildup_for_time(buildup_history, current_time):
     curr_str = dt.strftime("%H:%M")
 
     for row in buildup_history:
-        if isinstance(row, list) and len(row) > 0:
-            time_range = row[0] # "09:15 TO 09:20"
-            try:
-                # Handle both "HH:MM TO HH:MM" and other potential formats
-                if " TO " in time_range:
-                    start_str, end_str = time_range.split(" TO ")
-                    if start_str <= curr_str <= end_str:
-                        return normalize_buildup(row[1])
-            except:
-                continue
+        time_range = None
+        status = None
+
+        if isinstance(row, list) and len(row) > 1:
+            time_range = row[0]
+            status = row[1]
+        elif isinstance(row, dict):
+            time_range = row.get('interval') or row.get('time_range')
+            status = row.get('buildup') or row.get('status') or row.get('buildup_type')
+
+        if not time_range: continue
+
+        try:
+            if " TO " in time_range:
+                start_str, end_str = time_range.split(" TO ")
+                if start_str <= curr_str <= end_str:
+                    return normalize_buildup(status)
+        except:
+            continue
     return None
 
 async def send_replay_step(websocket, state):
@@ -405,21 +416,25 @@ async def send_replay_step(websocket, state):
                 if setup:
                     is_ce_trade = (setup.get('type') == 'LONG')
                     target_recs = ce_recs if is_ce_trade else pe_recs
+                    target_df = sub_ce if is_ce_trade else sub_pe
                     target_sym = state.ce_sym if is_ce_trade else state.pe_sym
                     target_markers = state.ce_markers if is_ce_trade else state.pe_markers
 
                     setup['strat_name'] = strat.name
                     setup['time'] = target_recs[-1]['time']
-                    setup['entry_price'] = target_recs[-1]['close']
-                    setup['sl'] = setup['entry_price'] - sl_dist
-                    setup['target'] = setup['entry_price'] + sl_dist * 2
+                    setup['entry_price'] = setup.get('entry_price') or target_df['close'].iloc[-1]
+                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
+                    setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
 
                     if handle_new_trade(state, strat.name, target_sym, setup, setup['time']):
                         new_signals.append(setup)
                         target_markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
 
         # B. Option-driven strategies
-        for side, sym, df, markers, strat_list, recs in [("CE", state.ce_sym, sub_ce, state.ce_markers, state.strategies["CE"], ce_recs), ("PE", state.pe_sym, sub_pe, state.pe_markers, state.strategies["PE"], pe_recs)]:
+        for side, sym, df, markers, strat_list, recs in [
+            ("CE", state.ce_sym, sub_ce, state.ce_markers, state.strategies["CE"], ce_recs),
+            ("PE", state.pe_sym, sub_pe, state.pe_markers, state.strategies["PE"], pe_recs)
+        ]:
             for strat in strat_list:
                 is_index_driven = any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"])
                 if not is_index_driven:
@@ -427,9 +442,11 @@ async def send_replay_step(websocket, state):
                     if setup:
                         setup['strat_name'] = strat.name
                         setup['time'] = recs[-1]['time']
-                        setup['entry_price'] = df['close'].iloc[-1]
-                        setup['sl'] = setup['entry_price'] - sl_dist
-                        setup['target'] = setup['entry_price'] + sl_dist * 2
+                        setup['entry_price'] = setup.get('entry_price') or df['close'].iloc[-1]
+                        # Prefer strategy SL/Target if they exist
+                        setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
+                        setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
+
                         if handle_new_trade(state, strat.name, sym, setup, setup['time']):
                             new_signals.append(setup)
                             markers.append({"time": setup['time'], "position": "belowBar", "color": "#FF9800", "shape": "arrowUp", "text": strat.name})
@@ -529,7 +546,7 @@ async def fetch_pcr_insights(index_sym, ref_date=None):
             if isinstance(latest, list) and len(latest) > 1:
                 status = latest[1]
             elif isinstance(latest, dict):
-                status = latest.get('status') or latest.get('buildup_type') or "NEUTRAL"
+                status = latest.get('buildup') or latest.get('status') or latest.get('buildup_type') or "NEUTRAL"
 
             insights['buildup_status'] = normalize_buildup(status)
 
