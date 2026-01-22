@@ -122,5 +122,6 @@ def getNiftyAndBNFnOKeys():
         print("Exception when calling MarketQuoteV3Api->get_ltp: %s\n" % e)
 
 
+
 if __name__ == "__main__":    
     getNiftyAndBNFnOKeys()
