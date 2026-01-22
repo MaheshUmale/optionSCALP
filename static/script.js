@@ -118,8 +118,6 @@ function initCharts() {
 }
 
 ws.onmessage = (event) => {
-    // Log message for debugging
-    // console.log("Received:", data.type);
     const data = JSON.parse(event.data);
 
     if (data.type === 'ping') {
@@ -147,53 +145,35 @@ ws.onmessage = (event) => {
         return;
     }
 
-    if (data.type === 'live_data' || data.type === 'replay_step') {
+    if (data.type === 'live_data' || data.type === 'replay_step' || data.type === 'history_data') {
         if (data.type === 'replay_step') {
             const slider = document.getElementById('replay-slider');
             if (data.max_idx) slider.max = data.max_idx;
             if (data.current_idx) slider.value = data.current_idx;
         }
 
-        if (data.index_data && idxSeries) {
-            const formatted = data.index_data.map(d => ({
-                time: d.time,
-                open: d.open, high: d.high, low: d.low, close: d.close
-            }));
-            idxSeries.setData(formatted);
-            idxVolSeries.setData(data.index_data.map(d => ({
-                time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
-            })));
-            setTimeout(() => idxChart.timeScale().fitContent(), 100);
+        const i_data = data.index_data || (data.is_index ? data.data : null);
+        const c_data = data.ce_data || (data.is_ce ? data.data : null);
+        const p_data = data.pe_data || (data.is_pe ? data.data : null);
+
+        if (i_data && idxSeries) {
+            idxSeries.setData(i_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
+            idxVolSeries.setData(i_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
+            if (data.type === 'live_data') setTimeout(() => idxChart.timeScale().fitContent(), 100);
         }
 
-        if (data.ce_data && ceSeries) {
-            const formatted = data.ce_data.map(d => ({
-                time: d.time,
-                open: d.open, high: d.high, low: d.low, close: d.close
-            }));
-            ceSeries.setData(formatted);
-            ceVolSeries.setData(data.ce_data.map(d => ({
-                time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
-            })));
-            if (data.ce_markers) {
-                ceSeries.setMarkers(data.ce_markers);
-            }
-            setTimeout(() => ceChart.timeScale().fitContent(), 100);
+        if (c_data && ceSeries) {
+            ceSeries.setData(c_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
+            ceVolSeries.setData(c_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
+            if (data.ce_markers) ceSeries.setMarkers(data.ce_markers);
+            if (data.type === 'live_data') setTimeout(() => ceChart.timeScale().fitContent(), 100);
         }
 
-        if (data.pe_data && peSeries) {
-            const formatted = data.pe_data.map(d => ({
-                time: d.time,
-                open: d.open, high: d.high, low: d.low, close: d.close
-            }));
-            peSeries.setData(formatted);
-            peVolSeries.setData(data.pe_data.map(d => ({
-                time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350'
-            })));
-            if (data.pe_markers) {
-                peSeries.setMarkers(data.pe_markers);
-            }
-            setTimeout(() => peChart.timeScale().fitContent(), 100);
+        if (p_data && peSeries) {
+            peSeries.setData(p_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
+            peVolSeries.setData(p_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
+            if (data.pe_markers) peSeries.setMarkers(data.pe_markers);
+            if (data.type === 'live_data') setTimeout(() => peChart.timeScale().fitContent(), 100);
         }
 
         if (data.index_symbol || data.index_data) {
