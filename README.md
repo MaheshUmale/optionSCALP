@@ -1,66 +1,172 @@
-# OptionScalp Pro - Ultra Quant Trading System
+# OptionScalp Pro - Professional Dashboard Quick Reference
 
-A professional web-based quantitative trading system for Nifty and Bank Nifty options scalping, featuring TradingView Lightweight Charts and a specialized Delta Volume Strategy for identifying high-probability buying opportunities.
+## 🚀 What's New
 
-## Features
-- **TradingView Charts:** High-performance, interactive candlestick charts using the `lightweight-charts` library (v4.2.3).
-- **Delta Volume Strategy:** Advanced order-flow logic that identifies "Short Covering" (Sellers Exiting) by analyzing Net Delta Volume, Open Interest (OI) changes, and price momentum from Trendlyne 5-minute buildup data.
-- **Real-time & Replay:** Dual-mode interface. Live mode provides real-time data streaming via WebSockets, while Replay mode allows for candle-by-candle historical playback.
-- **Automated Symbol Mapping:** Calculates nearest NSE expiry and dynamically maps Index trends to the most relevant ATM/OTM Call and Put options.
-- **Trendlyne Integration:** Asynchronous data retrieval from Trendlyne for 5-minute buildup clusters (ATM, ITM, and OTM strikes) to detect professional order flow behavior.
-- **FastAPI Backend:** High-concurrency Python backend using FastAPI, WebSockets, and `httpx` for non-blocking data acquisition.
+### Single Unified Dashboard
+Access the new professional dashboard at: **http://localhost:8000/**
 
-## Installation
+![Dashboard Preview](dashboard_preview_1769149964456.png)
 
-1. **Clone the repository:**
-   ```bash
-   git clone <repository-url>
-   cd optionSCALP
+---
+
+## 📁 New File Structure
+
+### CSS (Modular Design System)
+```
+static/css/
+├── variables.css      - Design tokens (colors, fonts, spacing)
+├── components.css     - Reusable UI components
+├── dashboard.css      - Main layout system
+├── charts.css         - Chart-specific styles
+└── widgets.css        - Widget panels
+```
+
+### JavaScript (ES6 Modules)
+```
+static/js/
+├── config.js          - Global configuration
+├── websocket.js       - WebSocket manager
+├── main.js            - Application entry point
+├── charts/
+│   └── manager.js     - Chart orchestration
+└── widgets/
+    ├── signals.js     - Signal panel
+    ├── pnl.js         - P&L tracker
+    ├── market.js      - Market overview
+    └── strategies.js  - Strategy performance
+```
+
+---
+
+## 🎯 Key Features
+
+### Professional Design
+- ✅ Institutional dark theme
+- ✅ Consistent typography (Inter + Roboto Mono)
+- ✅ Smooth animations and transitions
+- ✅ Responsive layout
+
+### Enhanced Charting
+- ✅ 3 synchronized charts (Index, CE, PE)
+- ✅ Real-time data updates
+- ✅ Volume overlays
+- ✅ Popout functionality
+
+### Trading Widgets
+- ✅ Market Overview (Index, Trend, PCR)
+- ✅ Live Signals Panel
+- ✅ P&L Tracker with Win Rate
+- ✅ Strategy Performance
+
+---
+
+## 🔗 Routes
+
+| URL | Page | Status |
+|-----|------|--------|
+| `/` | **New Dashboard** | ✨ Active |
+| `/chart?symbol=NIFTY` | Chart Popout | ✅ Updated |
+| `/live` | Legacy Live View | 🔄 Preserved |
+| `/replay` | Replay Mode | 🔄 Preserved |
+
+---
+
+## 🧹 Files You Can Delete (After Testing)
+
+Once you confirm the new dashboard works perfectly:
+
+```
+static/style.css       - Old monolithic CSS
+static/script.js       - Old monolithic JavaScript
+templates/index.html   - Unused template
+```
+
+Optional (if you don't need legacy views):
+```
+templates/live.html
+templates/live_index.html
+```
+
+---
+
+## ⚡ Quick Start
+
+1. **Start the server:**
+   ```powershell
+   cd d:\optionSCALP
+   python main.py
    ```
 
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-   *Note: Includes a direct GitHub install for the latest `tvDatafeed` features.*
+2. **Open browser:**
+   Navigate to `http://localhost:8000/`
 
-## How to Run
+3. **Go live:**
+   - Select index (NIFTY or BANKNIFTY)
+   - Click "Go Live" button
+   - Watch charts populate and signals appear
 
-### Windows (Command Prompt)
-```cmd
-set PYTHONPATH=.;%PYTHONPATH%
-python main.py
+---
+
+## 📊 Dashboard Layout
+
+### Left Sidebar (360px)
+- Market Overview metrics
+- Active Signals panel (scrollable)
+
+### Center Charts (Flex)
+- INDEX chart (top)
+- CE OPTION chart (middle)
+- PE OPTION chart (bottom)
+- All synchronized for crosshair and zoom
+
+### Right Panel (320px)
+Three tabs:
+1. **P&L** - Total P&L, wins/losses, win rate
+2. **Positions** - Active positions table
+3. **Strategies** - Strategy performance breakdown
+
+---
+
+## 🎨 Color Palette
+
+```css
+Primary Background:  #0B0E11
+Secondary:          #161A1F
+Cards:              #1E222D
+Accent Blue:        #2962FF
+Bullish Green:      #26A69A
+Bearish Red:        #EF5350
+Text Primary:       #E0E3EB
+Text Secondary:     #B2B5BE
 ```
 
-### Windows (PowerShell)
-```powershell
-$env:PYTHONPATH=".;" + $env:PYTHONPATH
-python main.py
-```
+---
 
-### Linux / macOS
-```bash
-export PYTHONPATH=$PYTHONPATH:.
-python main.py
-```
+## 📝 Next Steps
 
-After running, open your browser and navigate to: **`http://localhost:8000`**
+1. ✅ Test the new dashboard
+2. ✅ Verify all live data flows correctly
+3. ✅ Try all interactive features
+4. 🔄 Report any issues
+5. 🗑️ Clean up old files after confirmation
 
-## Usage Guide
-- **Go Live:** Connects to TradingView and fetches real-time Index and ATM Option data. The system automatically refreshes Trendlyne Delta signals at the start of every new candle.
-- **Replay Mode:** Accessible via `/replay`. Allows users to load historical data and step through it to verify strategy signals and visualize market pivots.
-- **Delta Volume Signals:** The system identifies bullish/bearish opportunities when sellers are "trapped" (Price rising/falling + Falling OI + Volume Spike). These are displayed in the real-time signal list.
-- **Visual Markers:** Entry setups and strategy signals are plotted directly on the charts as "BUY" markers for quick execution reference.
+---
 
-## Backtest Result: Jan 21, 2026
-- **Symbol:** BANKNIFTY (Bullish Signal)
-- **Setup:** Delta Volume Short Covering detected on Call Strikes.
-- **Signal:** Net Delta Positive | Call OI Decreasing | Price Momentum Up.
-- **Result:** High-probability momentum breakout confirmed in Replay.
+## 💡 Tips
 
-## Project Structure
-- `main.py`: FastAPI server and WebSocket manager.
-- `core/`: Scalping logic and risk management.
-- `data/`: TradingView data feed and caching.
-- `static/`: Frontend assets (script.js, style.css).
-- `templates/`: HTML5 dashboard.
+- **Fullscreen Charts**: Click the fullscreen button (⛶) on any chart
+- **Popout Charts**: Click the popout button (↗) to open chart in new window
+- **Tab Switching**: Use tabs in right panel to switch between P&L, Positions, and Strategies
+- **Responsive**: Resize browser to see responsive behavior
+
+---
+
+## 📚 Documentation
+
+- [implementation_plan.md](file:///d:/optionSCALP/implementation_plan.md) - Detailed plan
+- [task.md](file:///d:/optionSCALP/task.md) - Task breakdown  
+- [walkthrough.md](file:///d:/optionSCALP/walkthrough.md) - Complete walkthrough
+
+---
+
+**Congratulations! Your trading dashboard is now professional and ready to impress. 🎉**

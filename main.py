@@ -102,6 +102,40 @@ class SessionState:
         }
         self.tf_main = TrendFollowingStrategy()
 
+    def load_trades_from_db(self):
+        """Load trades from DB into PnLTracker for UI consistency."""
+        try:
+            trades_df = db.get_trades()
+            if trades_df.empty: return
+
+            # Filter for today or relevant session if needed
+            # For now, we load all to show history or filtered by strategy
+            for _, row in trades_df.iterrows():
+                t = Trade(
+                    symbol=row['symbol'],
+                    entry_price=row['entry_price'],
+                    strategy_name=row['strategy_name'],
+                    trade_type=row['trade_type'],
+                    time=row['entry_time']
+                )
+                t.status = row['status']
+                t.exit_price = row['exit_price']
+                t.exit_time = row['exit_time']
+                t.sl = row['sl']
+                t.target = row['target']
+                t.pnl = row['pnl'] if row['pnl'] else 0.0
+                t.exit_reason = row['exit_reason']
+                t.db_id = row['id']
+                
+                self.pnl_tracker.trades.append(t)
+                if t.status == "OPEN":
+                    self.active_trades.append(t)
+            
+            self.pnl_tracker.update_stats()
+            logger.info(f"Loaded {len(self.pnl_tracker.trades)} trades from DB.")
+        except Exception as e:
+            logger.error(f"Error loading trades from DB: {e}")
+
     def reset_trading_state(self):
         """Reset trades, PnL, and markers."""
         self.active_trades = []
@@ -112,8 +146,18 @@ class SessionState:
         self.last_total_volumes = {}
 
 @app.get("/", response_class=HTMLResponse)
+async def get_dashboard(request: Request):
+    """Main professional dashboard"""
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+# Legacy routes (deprecated - kept for backwards compatibility)
+@app.get("/live", response_class=HTMLResponse)
 async def get_live(request: Request):
     return templates.TemplateResponse("live.html", {"request": request})
+
+@app.get("/live_index", response_class=HTMLResponse)
+async def get_live_index(request: Request):
+    return templates.TemplateResponse("live_index.html", {"request": request})
 
 @app.get("/replay", response_class=HTMLResponse)
 async def get_replay(request: Request):
@@ -122,10 +166,6 @@ async def get_replay(request: Request):
 @app.get("/chart", response_class=HTMLResponse)
 async def get_chart(request: Request):
     return templates.TemplateResponse("chart.html", {"request": request})
-
-@app.get("/live_index", response_class=HTMLResponse)
-async def get_live_index(request: Request):
-    return templates.TemplateResponse("live_index.html", {"request": request})
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -160,6 +200,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.reset_strategies()
                     state.reset_trading_state()
                     await websocket.send_json({"type": "reset_ui"})
+                    
+                    # Load historical trades from DB to populate panels
+                    state.load_trades_from_db()
 
                     index_raw = data['index'].replace("NSE:", "")
                     state.index_sym = f"NSE:{index_raw}"
@@ -243,7 +286,40 @@ async def websocket_endpoint(websocket: WebSocket):
                             "time": t.entry_time,
                             "entry_price": t.entry_price,
                             "sl": t.sl or 0,
-                            "type": "LONG" if "PE" not in t.symbol else "SHORT" # Simplified side detection
+                            "type": "LONG" if "PE" not in t.symbol else "SHORT",
+                            "reason": getattr(t, 'reason', '')
+                        })
+
+                    # Build strategy performance report
+                    strategy_report = {}
+                    for t in state.pnl_tracker.trades:
+                        s_name = t.strategy_name
+                        if s_name not in strategy_report:
+                            strategy_report[s_name] = {"pnl": 0, "win": 0, "loss": 0, "total": 0}
+                        strategy_report[s_name]["total"] += 1
+                        if t.status == 'CLOSED':
+                            strategy_report[s_name]["pnl"] += t.pnl
+                            if t.pnl > 0:
+                                strategy_report[s_name]["win"] += 1
+                            else:
+                                strategy_report[s_name]["loss"] += 1
+
+                    for s in strategy_report:
+                        strategy_report[s]["win_rate"] = round(
+                            (strategy_report[s]["win"] / strategy_report[s]["total"] * 100), 1
+                        ) if strategy_report[s]["total"] > 0 else 0
+                        strategy_report[s]["pnl"] = round(strategy_report[s]["pnl"], 2)
+
+                    # Build active positions list
+                    active_positions = []
+                    for t in state.active_trades:
+                        active_positions.append({
+                            "symbol": t.symbol,
+                            "entry_price": t.entry_price,
+                            "current_price": t.entry_price,  # Will be updated by live ticks
+                            "quantity": getattr(t, 'quantity', 1),
+                            "pnl": 0,  # Will be calculated on updates
+                            "strategy": t.strategy_name
                         })
 
                     await websocket.send_json(clean_json({
@@ -260,10 +336,16 @@ async def websocket_endpoint(websocket: WebSocket):
                         "delta_signals": delta_signals,
                         "pcr_insights": state.pcr_insights,
                         "pnl_stats": state.pnl_tracker.get_stats(),
-                        "new_signals": historical_signals
+                        "new_signals": historical_signals,
+                        "strategy_report": strategy_report,
+                        "active_positions": active_positions
                     }))
 
                     feed_manager.subscribe(live_callback)
+                    
+                    # Start PCR Sync Task
+                    asyncio.create_task(pcr_update_task(websocket, state))
+
 
                     # Check if Upstox is configured
                     use_upstox = hasattr(config, 'ACCESS_TOKEN') and config.ACCESS_TOKEN != "YOUR_ACCESS_TOKEN"
@@ -386,6 +468,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.ce_markers = []
                     state.pe_markers = []
                     state.is_playing = True
+                    
+                    # Start Replay Loop
+                    asyncio.create_task(replay_loop(websocket, state))
+
 
                     await websocket.send_json({
                         "type": "replay_info",
@@ -672,6 +758,52 @@ async def send_replay_step(websocket, state, send=True):
             await websocket.send_json(clean_json(msg))
     except Exception as e:
         print(f"ERROR in send_replay_step: {e}")
+
+async def replay_loop(websocket, state):
+    """Background task to drive the replay."""
+    logger.info("Starting Replay Loop")
+    try:
+        while state.is_playing and websocket.client_state == WebSocketState.CONNECTED:
+            await send_replay_step(websocket, state)
+            state.replay_idx += 1
+            
+            # Check if we reached end
+            max_len = min(len(state.replay_data_ce), len(state.replay_data_pe))
+            if state.replay_idx >= max_len:
+                logger.info("Replay Finished")
+                state.is_playing = False
+                await websocket.send_json({"type": "replay_finished"})
+                break
+                
+            await asyncio.sleep(0.5) # Speed of replay
+    except Exception as e:
+        logger.error(f"Replay Loop Error: {e}")
+
+async def pcr_update_task(websocket, state):
+    """Background task to update PCR every minute."""
+    logger.info("Starting PCR Update Task")
+    try:
+        while state.is_live and websocket.client_state == WebSocketState.CONNECTED:
+            if state.index_sym:
+                index_raw = state.index_sym.replace("NSE:", "")
+                pcr_res = await fetch_pcr_insights(index_raw)
+                
+                # Update State
+                state.pcr_insights = pcr_res.get('insights', {})
+                state.buildup_history = pcr_res.get('buildup_list', [])
+                
+                # Send Update
+                if websocket.client_state == WebSocketState.CONNECTED:
+                    await websocket.send_json({
+                        "type": "pcr_update",
+                        "pcr_insights": state.pcr_insights,
+                        "trend": state.tf_main.get_trend(None, state.pcr_insights) # Just update trend based on new PCR
+                    })
+            
+            await asyncio.sleep(60) # Update every minute
+    except Exception as e:
+        logger.error(f"PCR Update Task Error: {e}")
+
 
 async def run_full_backtest(websocket, state, index_sym, date_str):
     try:

@@ -21,6 +21,8 @@ class DatabaseManager:
 
     def _init_db(self):
         with self._get_connection() as conn:
+            # Enable WAL mode for better concurrency
+            conn.execute('PRAGMA journal_mode=WAL;')
             cursor = conn.cursor()
 
             # OHLCV Table

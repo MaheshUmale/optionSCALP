@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptionScalp Pro - Professional Trading Dashboard</title>
+    
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="/static/css/variables.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/charts.css">
+    <link rel="stylesheet" href="/static/css/widgets.css">
+    
+    <!-- LightweightCharts Library -->
+    <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="brand">
+                <div class="brand-icon">OS</div>
+                <span>OptionScalp Pro</span>
+            </div>
+            
+            <div class="header-controls">
+                <select id="index-select" class="select symbol-selector">
+                    <option value="BANKNIFTY">BANKNIFTY</option>
+                    <option value="NIFTY">NIFTY</option>
+                </select>
+                
+                <button id="btn-live" class="btn btn-primary">
+                    <span>●</span> Go Live
+                </button>
+                
+                <button id="btn-replay" class="btn btn-secondary">
+                    ⏯ Replay Mode
+                </button>
+                
+                <div class="status-indicator">
+                    <span class="status-dot"></span>
+                    <span id="status-text">Ready</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="dashboard-main">
+            <!-- Left Sidebar -->
+            <aside class="dashboard-sidebar">
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">Market Overview</div>
+                    <div class="market-overview">
+                        <div class="market-metric">
+                            <div class="metric-label">
+                                <span class="metric-name">Index Price</span>
+                                <span id="index-price" class="metric-value">--</span>
+                            </div>
+                            <div id="index-change" class="metric-change">
+                                <span>--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="market-metric">
+                            <div class="metric-label">
+                                <span class="metric-name">Trend</span>
+                                <span id="market-trend" class="metric-value">--</span>
+                            </div>
+                        </div>
+                        
+                        <div class="market-metric">
+                            <div class="metric-label">
+                                <span class="metric-name">PCR</span>
+                                <span id="pcr-value" class="metric-value">--</span>
+                            </div>
+                            <div id="pcr-status" class="badge badge-neutral">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sidebar-section sidebar-scroll">
+                    <div class="sidebar-section-title">Active Signals</div>
+                    <div id="signals-panel" class="signals-panel">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📊</div>
+                            <div class="empty-state-text">No signals yet</div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Chart Area -->
+            <div class="dashboard-charts">
+                <div class="chart-grid chart-grid-3" id="chart-grid">
+                    <!-- Index Chart -->
+                    <div class="chart-wrapper">
+                        <div class="chart-header">
+                            <div class="chart-title">
+                                <span class="chart-symbol" id="index-symbol">INDEX</span>
+                                <span class="chart-price" id="index-price-display">--</span>
+                            </div>
+                            <div class="chart-controls">
+                                <button class="chart-control-btn" data-action="fullscreen" data-chart="index" title="Fullscreen">⛶</button>
+                                <a href="#" id="index-popout-btn" target="_blank" class="chart-control-btn" title="Pop-out">↗</a>
+                            </div>
+                        </div>
+                        <div class="chart-canvas" id="index-chart"></div>
+                    </div>
+
+                    <!-- CE Chart -->
+                    <div class="chart-wrapper">
+                        <div class="chart-header">
+                            <div class="chart-title">
+                                <span class="chart-symbol" id="ce-symbol">CE OPTION</span>
+                                <span class="chart-price" id="ce-price-display">--</span>
+                            </div>
+                            <div class="chart-controls">
+                                <button class="chart-control-btn" data-action="fullscreen" data-chart="ce" title="Fullscreen">⛶</button>
+                                <a href="#" id="ce-popout-btn" target="_blank" class="chart-control-btn" title="Pop-out">↗</a>
+                            </div>
+                        </div>
+                        <div class="chart-canvas" id="ce-chart"></div>
+                    </div>
+
+                    <!-- PE Chart -->
+                    <div class="chart-wrapper">
+                        <div class="chart-header">
+                            <div class="chart-title">
+                                <span class="chart-symbol" id="pe-symbol">PE OPTION</span>
+                                <span class="chart-price" id="pe-price-display">--</span>
+                            </div>
+                            <div class="chart-controls">
+                                <button class="chart-control-btn" data-action="fullscreen" data-chart="pe" title="Fullscreen">⛶</button>
+                                <a href="#" id="pe-popout-btn" target="_blank" class="chart-control-btn" title="Pop-out">↗</a>
+                            </div>
+                        </div>
+                        <div class="chart-canvas" id="pe-chart"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel -->
+            <aside class="dashboard-panel">
+                <div class="panel-tabs">
+                    <button class="panel-tab active" data-tab="pnl">P&L</button>
+                    <button class="panel-tab" data-tab="positions">Positions</button>
+                    <button class="panel-tab" data-tab="strategies">Strategies</button>
+                </div>
+
+                <div class="panel-content">
+                    <!-- PnL Tab -->
+                    <div id="pnl-tab" class="panel-tab-content active">
+                        <div class="pnl-widget">
+                            <div class="card-title">Total P&L</div>
+                            <div id="pnl-main-value" class="pnl-main-value">₹0.00</div>
+                            
+                            <div class="pnl-stats-grid">
+                                <div class="pnl-stat">
+                                    <div id="pnl-closed" class="pnl-stat-value">0</div>
+                                    <div class="pnl-stat-label">Closed Trades</div>
+                                </div>
+                                <div class="pnl-stat">
+                                    <div id="pnl-open" class="pnl-stat-value">0</div>
+                                    <div class="pnl-stat-label">Open Trades</div>
+                                </div>
+                                <div class="pnl-stat">
+                                    <div id="pnl-wins" class="pnl-stat-value text-success">0</div>
+                                    <div class="pnl-stat-label">Wins</div>
+                                </div>
+                                <div class="pnl-stat">
+                                    <div id="pnl-losses" class="pnl-stat-value text-danger">0</div>
+                                    <div class="pnl-stat-label">Losses</div>
+                                </div>
+                            </div>
+                            
+                            <div class="win-rate-indicator">
+                                <div class="win-rate-bar">
+                                    <div id="win-rate-fill" class="win-rate-fill" style="width: 0%"></div>
+                                </div>
+                                <div id="win-rate-text" class="win-rate-text">Win Rate: 0%</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Positions Tab -->
+                    <div id="positions-tab" class="panel-tab-content" style="display: none;">
+                        <div class="positions-widget">
+                            <div class="positions-header">
+                                <span class="card-title">Active Positions</span>
+                                <span id="positions-count" class="positions-count">0 positions</span>
+                            </div>
+                            <div id="positions-list">
+                                <div class="empty-state">
+                                    <div class="empty-state-icon">📋</div>
+                                    <div class="empty-state-text">No active positions</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Strategies Tab -->
+                    <div id="strategies-tab" class="panel-tab-content" style="display: none;">
+                        <div class="card-title" style="margin-bottom: var(--space-3);">Strategy Performance</div>
+                        <div id="strategy-performance" class="strategy-performance">
+                            <div class="empty-state">
+                                <div class="empty-state-icon">⚡</div>
+                                <div class="empty-state-text">No strategy data yet</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- JavaScript Modules -->
+    <script src="/static/js/main.js" type="module"></script>
+</body>
+</html>

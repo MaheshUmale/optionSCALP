@@ -1,16 +1,62 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <title>OptionScalp Pro - Single Chart</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptionScalp Pro - Chart Viewer</title>
+
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="/static/css/variables.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/charts.css">
+
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; background: #0c0d10; overflow: hidden; }
-        #full-chart { width: 100vw; height: 100vh; }
-        .chart-info { position: absolute; top: 10px; left: 10px; z-index: 100; color: #d1d4dc; font-family: sans-serif; pointer-events: none; }
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: var(--bg-primary);
+            overflow: hidden;
+            font-family: var(--font-primary);
+        }
+
+        #full-chart {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .chart-info {
+            position: absolute;
+            top: var(--space-3);
+            left: var(--space-3);
+            z-index: 100;
+            color: var(--text-primary);
+            pointer-events: none;
+            background: var(--bg-overlay);
+            padding: var(--space-3);
+            border-radius: var(--radius-lg);
+            backdrop-filter: blur(10px);
+        }
+
+        .chart-info h2 {
+            margin: 0 0 var(--space-2) 0;
+            font-size: var(--text-xl);
+            font-family: var(--font-mono);
+            color: var(--accent-primary);
+        }
+
+        #price-info {
+            font-family: var(--font-mono);
+            font-size: var(--text-lg);
+            font-weight: var(--weight-medium);
+        }
     </style>
 </head>
+
 <body>
     <div class="chart-info">
         <h2 id="symbol-display">Loading...</h2>
@@ -138,4 +184,5 @@
         initChart();
     </script>
 </body>
+
 </html>
