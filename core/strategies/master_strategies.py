@@ -555,29 +555,10 @@ class VWAPEMAGateShort(BaseStrategy):
                 }
         return None
 
-class OptionBuyTest(BaseStrategy):
-    def __init__(self, symbol_type="BANKNIFTY"):
-        super().__init__("OPTION_BUY_TEST", symbol_type, is_index_driven=False)
-
-    def check_setup(self, df, pcr_insights=None):
-        if df is None or len(df) < 2: return None
-        # Always trigger a test signal to verify PnL flow
-        last_candle = df.iloc[-1]
-        prev_candle = df.iloc[-2]
-        if last_candle['close'] > prev_candle['high']:
-            return {
-                "type": "LONG",
-                "entry_price": last_candle['close'],
-                "sl": last_candle['low'] - 10,
-                "target": last_candle['close'] + 20,
-                "reason": "Test Signal."
-            }
-        return None
-
 STRATEGIES = [
     BBMeanReversionLong, BBMeanReversionShort, BigDogBreakoutLong, BigDogBreakoutShort,
     BRFShort, BRFReversalShort, GapFillLong, IndexBreakoutLong, RSIScalperLong, RSIScalperShort,
     SnapReversalLong, SnapReversalShort, SmartTrendIndexLong, SmartTrendIndexShort,
     InstitutionalDemandLong, RoundLevelRejectionShort, SampleTrendReversalShort,
-    ScreenerMomentumLong, VolumeSpikeScalperLong, VWAPEMAGateLong, VWAPEMAGateShort, OptionBuyTest
+    ScreenerMomentumLong, VolumeSpikeScalperLong, VWAPEMAGateLong, VWAPEMAGateShort
 ]
