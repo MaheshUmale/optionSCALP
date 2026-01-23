@@ -117,6 +117,7 @@ class UpstoxLiveFeed:
             self.streamer.on("error", self.on_error)
             self.streamer.on("close", self.on_close)
 
+            # auto_reconnect can sometimes cause race conditions during quick restarts
             self.streamer.auto_reconnect(True, 10, 5)
             self.streamer.connect()
             self.is_running = True
@@ -127,10 +128,13 @@ class UpstoxLiveFeed:
         self.is_running = False
         if self.streamer:
             try:
+                # Check if streamer has a valid connection before disconnecting
+                # The SDK might throw if we disconnect an already closed socket.
                 self.streamer.disconnect()
-            except:
-                pass
-            self.streamer = None
+            except Exception as e:
+                logger.warning(f"[UpstoxLiveFeed] Error during disconnect: {e}")
+            finally:
+                self.streamer = None
 
     def add_symbols(self, symbols_with_keys):
         """

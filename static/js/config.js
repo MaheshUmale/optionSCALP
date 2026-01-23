@@ -5,7 +5,7 @@
 export const CONFIG = {
     // WebSocket
     WS_URL: `ws://${window.location.host}/ws`,
-    
+
     // Chart Settings
     CHART_OPTIONS: {
         layout: {
@@ -28,20 +28,22 @@ export const CONFIG = {
                 const date = new Date(time * 1000);
                 const h = String(date.getUTCHours()).padStart(2, '0');
                 const m = String(date.getUTCMinutes()).padStart(2, '0');
-                return `${h}:${m}`;
+                const s = String(date.getUTCSeconds()).padStart(2, '0');
+                return `${h}:${m}:${s}`;
             }
         },
         localization: {
-            locale: 'en-US',
+            locale: 'en-IN',
             timeFormatter: (timestamp) => {
                 const date = new Date(timestamp * 1000);
                 const h = String(date.getUTCHours()).padStart(2, '0');
                 const m = String(date.getUTCMinutes()).padStart(2, '0');
-                return `${h}:${m}`;
+                const s = String(date.getUTCSeconds()).padStart(2, '0');
+                return `${h}:${m}:${s}`;
             }
         }
     },
-    
+
     CANDLESTICK_STYLE: {
         upColor: '#26A69A',
         downColor: '#EF5350',
@@ -52,21 +54,21 @@ export const CONFIG = {
         lastValueVisible: true,
         priceFormat: { type: 'price', precision: 2, minMove: 0.05 }
     },
-    
+
     VOLUME_STYLE: {
         color: '#26A69A',
         priceFormat: { type: 'volume' },
         priceScaleId: '',
         scaleMargins: { top: 0.85, bottom: 0 }
     },
-    
+
     // UI Settings
     MAX_SIGNALS: 50,
     SIGNAL_COLORS: {
         TREND_FOLLOWING: '#2196F3',
         DEFAULT: '#FF9800'
     },
-    
+
     // Update intervals
     UI_UPDATE_THROTTLE: 100 // ms
 };

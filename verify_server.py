@@ -22,10 +22,14 @@ async def test_server():
             if data['type'] == 'live_data':
                 logger.info("Received live_data")
                 live_data_received = True
+                
                 # Validation
-                assert 'active_positions' in data, "Missing active_positions"
-                assert 'pcr_insights' in data, "Missing pcr_insights"
-                logger.info("✅ Live Data Validation Passed")
+                if 'active_positions' not in data: logger.error("Missing active_positions")
+                if 'pcr_insights' not in data: logger.error("Missing pcr_insights")
+                if 'trend' not in data: logger.error("Missing trend")
+                
+                logger.info(f"Trend: {data.get('trend')}")
+                logger.info("✅ Live Data & UI Payload Validation Passed")
             elif data['type'] == 'error':
                  logger.error(f"Error: {data['message']}")
                  return

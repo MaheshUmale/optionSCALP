@@ -239,7 +239,7 @@ class DataManager:
         return None
 
     def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100, reference_date=None):
-        logger.info(f"DataManager.get_data called for {symbol} (n_bars={n_bars})")
+        logger.info(f"DataManager.get_data called for {symbol} (n_bars={n_bars}, reference_date={reference_date})")
         # Clean symbol if needed (e.g. remove NSE: prefix for inner searches)
         clean_sym = symbol.replace("NSE:", "")
         int_str = str(interval)
@@ -248,51 +248,79 @@ class DataManager:
         df_db = self.db.get_ohlcv(clean_sym, int_str)
         if not df_db.empty and len(df_db) >= n_bars:
             logger.info(f"Returning {len(df_db)} bars from cache for {clean_sym}")
-            return df_db.tail(n_bars)
+            df = df_db.tail(n_bars)
+        else:
+            df = None
 
-        df = None
+            # 2. Try Upstox if enabled
+            if self.upstox_client:
+                try:
+                    inst_key = self.get_upstox_key_for_tv_symbol(symbol)
+                    if inst_key:
+                        # Map TV interval to Upstox interval string
+                        u_interval = "1m" if "1" in int_str else "5m"
+                        logger.info(f"Attempting Upstox fetch for {clean_sym} ({inst_key})")
+                        res = self.upstox_client.get_intra_day_candle_data(inst_key, u_interval)
+                        if res and res.status == 'success' and res.data and res.data.candles:
+                            # Upstox candles: [timestamp, open, high, low, close, volume, oi]
+                            candles = res.data.candles
+                            df_u = pd.DataFrame(candles, columns=['datetime', 'open', 'high', 'low', 'close', 'volume', 'oi'])
+                            df_u['datetime'] = pd.to_datetime(df_u['datetime'])
+                            df_u.set_index('datetime', inplace=True)
+                            df_u = df_u.sort_index()
+                            df = df_u
+                            print(f"Successfully fetched {len(df)} bars from Upstox")
+                except Exception as e:
+                    print(f"Upstox fetch error for {clean_sym}: {e}")
 
-        # 2. Try Upstox if enabled
-        if self.upstox_client:
-            try:
-                inst_key = self.get_upstox_key_for_tv_symbol(symbol)
-                if inst_key:
-                    # Map TV interval to Upstox interval string
-                    u_interval = "1m" if "1" in int_str else "5m"
-                    logger.info(f"Attempting Upstox fetch for {clean_sym} ({inst_key})")
-                    res = self.upstox_client.get_intra_day_candle_data(inst_key, u_interval)
-                    if res and res.status == 'success' and res.data and res.data.candles:
-                        # Upstox candles: [timestamp, open, high, low, close, volume, oi]
-                        candles = res.data.candles
-                        df_u = pd.DataFrame(candles, columns=['datetime', 'open', 'high', 'low', 'close', 'volume', 'oi'])
-                        df_u['datetime'] = pd.to_datetime(df_u['datetime'])
-                        df_u.set_index('datetime', inplace=True)
-                        df_u = df_u.sort_index()
-                        df = df_u
-                        print(f"Successfully fetched {len(df)} bars from Upstox")
-            except Exception as e:
-                print(f"Upstox fetch error for {clean_sym}: {e}")
+            # 3. Fallback to TvFeed
+            if df is None or df.empty:
+                print(f"Falling back to TvFeed for {clean_sym}")
+                df = self.feed.get_historical_data(
+                    symbol=clean_sym,
+                    exchange="NSE",
+                    interval=interval,
+                    n_bars=n_bars
+                )
+            
+            if df is not None and not df.empty:
+                print(f"Successfully fetched {len(df)} bars for {clean_sym} from TvFeed")
+                # Standardize index to UTC
+                if df.index.tz is None:
+                    df.index = df.index.tz_localize('Asia/Kolkata').tz_convert('UTC')
+                else:
+                    df.index = df.index.tz_convert('UTC')
 
-        # 3. Fallback to TvFeed
-        if df is None or df.empty:
-            print(f"Falling back to TvFeed for {clean_sym}")
-            df = self.feed.get_historical_data(
-                symbol=clean_sym,
-                exchange="NSE",
-                interval=interval,
-                n_bars=n_bars
-            )
-        if df is not None and not df.empty:
-            print(f"Successfully fetched {len(df)} bars for {clean_sym} from TvFeed")
-            # Standardize index to UTC
-            if df.index.tz is None:
-                df.index = df.index.tz_localize('Asia/Kolkata').tz_convert('UTC')
+                # Store in DB
+                self.db.store_ohlcv(clean_sym, int_str, df)
+        
+        # CRITICAL FIX: Filter by reference_date if provided
+        # For replay purposes, we want data UP TO the reference_date (not after it)
+        if df is not None and not df.empty and reference_date is not None:
+            # Convert reference_date to UTC for comparison
+            if hasattr(reference_date, 'tzinfo') and reference_date.tzinfo is not None:
+                ref_date_utc = reference_date.astimezone(timezone.utc)
             else:
-                df.index = df.index.tz_convert('UTC')
-
-            # Store in DB
-            self.db.store_ohlcv(clean_sym, int_str, df)
-            return df
+                # Assume IST if naive
+                ref_date_utc = reference_date.replace(tzinfo=IST_TZ).astimezone(timezone.utc)
+            
+            # Filter to only include data UP TO reference_date (inclusive of that day)
+            # Add end of day to include all of reference_date's data
+            end_of_ref_day = ref_date_utc.replace(hour=23, minute=59, second=59)
+            df_filtered = df[df.index <= end_of_ref_day]
+            
+            if not df_filtered.empty:
+                # Return the last n_bars from the filtered dataset
+                df = df_filtered.tail(n_bars)
+                logger.info(f"Filtered to {len(df)} bars up to {reference_date.date()}")
+            else:
+                logger.warning(f"No data found for {symbol} on or before {reference_date.date()}")
+        
+        if df is None or df.empty:
+            print(f"Error: No data available for {symbol}")
+            return pd.DataFrame()
+        
+        return df
 
         print(f"Error: Symbol {clean_sym} not found on TradingView. No data available.")
         return pd.DataFrame()

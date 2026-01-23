@@ -22,27 +22,24 @@ export class PnLWidget {
         }
 
         // Update main PnL value
-        const pnl = stats.total_pnl || 0;
-        this.elements.mainValue.textContent = `₹${pnl.toFixed(2)}`;
-
-        // Update color
-        this.elements.mainValue.classList.remove('positive', 'negative');
-        if (pnl > 0) {
-            this.elements.mainValue.classList.add('positive');
-        } else if (pnl < 0) {
-            this.elements.mainValue.classList.add('negative');
+        if (this.elements.mainValue) {
+            const pnl = stats.total_pnl || 0;
+            this.elements.mainValue.textContent = `₹${pnl.toFixed(2)}`;
+            this.elements.mainValue.classList.remove('positive', 'negative');
+            if (pnl > 0) this.elements.mainValue.classList.add('positive');
+            else if (pnl < 0) this.elements.mainValue.classList.add('negative');
         }
 
         // Update stats
-        this.elements.closed.textContent = stats.total_closed || 0;
-        this.elements.open.textContent = (stats.total_trades - stats.total_closed) || 0;
-        this.elements.wins.textContent = stats.win_count || 0;
-        this.elements.losses.textContent = stats.loss_count || 0;
+        if (this.elements.closed) this.elements.closed.textContent = stats.total_closed || 0;
+        if (this.elements.open) this.elements.open.textContent = (stats.total_trades - stats.total_closed) || 0;
+        if (this.elements.wins) this.elements.wins.textContent = stats.win_count || 0;
+        if (this.elements.losses) this.elements.losses.textContent = stats.loss_count || 0;
 
         // Update win rate
         const winRate = stats.win_rate || 0;
-        this.elements.winRateFill.style.width = `${winRate}%`;
-        this.elements.winRateText.textContent = `Win Rate: ${winRate}%`;
+        if (this.elements.winRateFill) this.elements.winRateFill.style.width = `${winRate}%`;
+        if (this.elements.winRateText) this.elements.winRateText.textContent = `Win Rate: ${winRate}%`;
     }
 
     reset() {

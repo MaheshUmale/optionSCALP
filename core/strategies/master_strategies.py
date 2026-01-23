@@ -478,6 +478,7 @@ class ScreenerMomentumLong(BaseStrategy):
         if df is None or len(df) < 21: return None
         avg_vol = df['volume'].rolling(20).mean().iloc[-1]
         open_price = df[df.index.date == df.index[-1].date()]['open'].iloc[0]
+        if avg_vol == 0 or open_price == 0: return None
         if (df.iloc[-1]['volume'] / avg_vol) > 1.2 and (df.iloc[-1]['close'] / open_price) > 1.003:
             atr = ta.atr(df['high'], df['low'], df['close'], length=14).iloc[-1]
             if df['close'].iloc[-5:].std() < atr:

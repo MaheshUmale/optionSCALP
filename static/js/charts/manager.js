@@ -9,6 +9,12 @@ export class ChartManager {
         this.charts = {};
         this.series = {};
         this.volumeSeries = {};
+        this.chartElements = {};
+        this.storedData = {
+            index: [],
+            ce: [],
+            pe: []
+        };
         this.markers = {
             ce: [],
             pe: []
@@ -31,6 +37,9 @@ export class ChartManager {
 
         // Setup resize handling
         window.addEventListener('resize', () => this.handleResize());
+
+        // Initial resize
+        setTimeout(() => this.handleResize(), 200);
     }
 
     createChart(id, elementId) {
@@ -40,8 +49,15 @@ export class ChartManager {
             return;
         }
 
+        // Store element for resizing
+        this.chartElements[id] = element;
+
         // Create chart instance
-        const chart = LightweightCharts.createChart(element, CONFIG.CHART_OPTIONS);
+        const chart = LightweightCharts.createChart(element, {
+            ...CONFIG.CHART_OPTIONS,
+            width: element.clientWidth || 300,
+            height: element.clientHeight || 300
+        });
 
         // Add candlestick series
         const candleSeries = chart.addCandlestickSeries({
@@ -49,12 +65,13 @@ export class ChartManager {
             priceScaleId: 'right'
         });
 
-        // Configure price scale
+        // Configure price scale with better margins to prevent excessive zoom
         chart.priceScale('right').applyOptions({
             autoScale: true,
             borderVisible: false,
-            scaleMargins: { top: 0.1, bottom: 0.2 },
-            minimumWidth: 100
+            scaleMargins: { top: 0.05, bottom: 0.05 },  // Minimum margins for maximum detail
+            minimumWidth: 80,
+            alignLabels: true
         });
 
         // Add volume series
@@ -108,9 +125,9 @@ export class ChartManager {
         const series = this.series[chartId];
         const volumeSeries = this.volumeSeries[chartId];
 
-        if (!series || !data) return;
+        if (!series || !data || data.length === 0) return;
 
-        const candleData = data.map(d => ({
+        const candleData = data.filter(d => d.open > 0 && d.high > 0 && d.low > 0 && d.close > 0).map(d => ({
             time: d.time,
             open: d.open,
             high: d.high,
@@ -118,7 +135,7 @@ export class ChartManager {
             close: d.close
         }));
 
-        const volumeData = data.map(d => ({
+        const volumeData = data.filter(d => d.open > 0).map(d => ({
             time: d.time,
             value: d.volume,
             color: d.close >= d.open ? '#26A69A' : '#EF5350'
@@ -128,6 +145,12 @@ export class ChartManager {
         if (volumeSeries) {
             volumeSeries.setData(volumeData);
         }
+
+        // Store data for alignment/referencing
+        this.storedData[chartId] = candleData;
+
+        // Force fit content for proper scaling on load
+        this.charts[chartId].timeScale().fitContent();
     }
 
     updateLiveCandle(chartId, candle) {
@@ -135,6 +158,29 @@ export class ChartManager {
         const volumeSeries = this.volumeSeries[chartId];
 
         if (!series) return;
+
+        // Ensure we don't send back-dated candles (prevents "Cannot update oldest data" crash)
+        if (this.storedData[chartId] && this.storedData[chartId].length > 0) {
+            const lastCandle = this.storedData[chartId][this.storedData[chartId].length - 1];
+
+            if (candle.time < lastCandle.time) {
+                // If the drift is significant (> 1s), log it and ignore.
+                if (lastCandle.time - candle.time > 1) {
+                    console.warn(`[${chartId}] Ignoring back-dated candle: last=${lastCandle.time}, new=${candle.time}, diff=${lastCandle.time - candle.time}s`);
+                    return;
+                }
+                // Else it's likely a sub-second tick or the same second, which series.update handles fine as long as not older than prior-to-last.
+            }
+
+            if (candle.time > lastCandle.time) {
+                this.storedData[chartId].push({ ...candle });
+                if (this.storedData[chartId].length > 1000) this.storedData[chartId].shift();
+            } else if (candle.time === lastCandle.time) {
+                Object.assign(lastCandle, candle);
+            }
+        } else {
+            this.storedData[chartId] = [{ ...candle }];
+        }
 
         series.update({
             time: candle.time,
@@ -170,23 +216,16 @@ export class ChartManager {
     }
 
     fitContent(chartId) {
-        // Disabled auto-fit to prevent zoom mismatch
-        // const chart = this.charts[chartId];
-        // if (chart) {
-        //     setTimeout(() => chart.timeScale().fitContent(), 100);
-        // }
+        const chart = this.charts[chartId];
+        if (chart) {
+            chart.timeScale().fitContent();
+        }
     }
 
     alignCharts(bars = 50) {
         // Find the chart with the most recent data to use as anchor
-        let refChartId = 'index';
-        let refSeries = this.series[refChartId];
-
-        // Safety check
-        if (!refSeries || this.series['index'].data().length === 0) return;
-
-        // Get total data points
-        const data = this.series['index'].data();
+        if (!this.storedData || !this.storedData['index']) return;
+        const data = this.storedData['index'];
         if (data.length === 0) return;
 
         // Calculate range
@@ -208,9 +247,13 @@ export class ChartManager {
 
     handleResize() {
         Object.entries(this.charts).forEach(([id, chart]) => {
-            const element = chart._container;
+            const element = this.chartElements[id];
             if (element) {
-                chart.resize(element.clientWidth, element.clientHeight);
+                const w = element.clientWidth;
+                const h = element.clientHeight;
+                if (w > 0 && h > 0) {
+                    chart.resize(w, h);
+                }
             }
         });
     }

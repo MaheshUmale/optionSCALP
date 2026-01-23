@@ -11,7 +11,20 @@ class TvFeed:
             if username and password:
                 self.tv = TvDatafeed(username, password)
             else:
-                self.tv = TvDatafeed()
+                try:
+                    self.tv = TvDatafeed()
+                except Exception as e:
+                    logger.warning(f"TvDatafeed auto-login failed: {e}. Trying anonymous mode.")
+                    try:
+                         # Attempt without auto-login (if supported by installed version, otherwise just fail gracefully)
+                         self.tv = TvDatafeed(auto_login=False) 
+                    except TypeError:
+                         # Fallback if auto_login arg not supported
+                         logger.error("TvDatafeed anonymous mode not supported or failed.")
+                         self.tv = None
+                    except Exception as e2:
+                         logger.error(f"TvDatafeed anonymous init failed: {e2}")
+                         self.tv = None
             logger.info("TvDatafeed initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize TvDatafeed: {e}")

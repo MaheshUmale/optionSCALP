@@ -42,13 +42,34 @@ class PnLTracker:
         self.total_pnl = 0
         self.win_count = 0
         self.loss_count = 0
+        
+        total_win = 0
+        total_loss = 0
+        peak = 0
+        max_dd = 0
+        current_pnl = 0
+
         for t in self.trades:
             if t.status == 'CLOSED':
                 self.total_pnl += t.pnl
+                current_pnl += t.pnl
+                
+                # Drawdown Logic
+                if current_pnl > peak:
+                    peak = current_pnl
+                dd = peak - current_pnl
+                if dd > max_dd: max_dd = dd
+
                 if t.pnl > 0:
                     self.win_count += 1
+                    total_win += t.pnl
                 else:
                     self.loss_count += 1
+                    total_loss += abs(t.pnl)
+        
+        self.max_drawdown = max_dd
+        self.avg_win = total_win / self.win_count if self.win_count > 0 else 0
+        self.avg_loss = total_loss / self.loss_count if self.loss_count > 0 else 0
 
     def get_stats(self):
         self.update_stats()
@@ -61,5 +82,8 @@ class PnLTracker:
             "total_pnl": round(self.total_pnl, 2),
             "win_count": self.win_count,
             "loss_count": self.loss_count,
-            "win_rate": round(win_rate, 2)
+            "win_rate": round(win_rate, 2),
+            "max_drawdown": round(self.max_drawdown, 2),
+            "avg_win": round(self.avg_win, 2),
+            "avg_loss": round(self.avg_loss, 2)
         }

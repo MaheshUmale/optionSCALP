@@ -1,52 +1,65 @@
-# Professional Dashboard Conversion - Task Breakdown
+# OptionScalp - Active Tasks (Updated: 2026-01-23)
 
-## Phase 1: Foundation & Design System
-- [ ] Create CSS variables and design tokens
-- [ ] Build modular CSS architecture
-- [ ] Set up professional color scheme and typography
-- [ ] Create reusable component library
+## ✅ Completed Work
 
-## Phase 2: Core Dashboard
-- [ ] Create unified `dashboard.html` template
-- [ ] Implement grid-based responsive layout
-- [ ] Build professional navigation header
-- [ ] Create sidebar panel system
-- [ ] Add loading states and transitions
+### System Stabilization & Core Fixes
+- [x] Fixed TvDatafeed crash (Chrome cookie decryption error)
+- [x] Restored Upstox connection with proper error handling
+- [x] Fixed WebSocket Runtime Error
+- [x] Handle WebSocketDisconnect gracefully
+- [x] Fixed Division by Zero in Master Strategies
+- [x] Fixed PnL Widget DOM Mismatch
 
-## Phase 3: Advanced Charting
-- [ ] Refactor chart initialization into modules
-- [ ] Add TradingView-style multi-pane layout
-- [ ] Implement volume profile overlays
-- [ ] Add technical indicators panel
-- [ ] Create chart synchronization system
-- [ ] Build drawing tools (trend lines, Fibonacci)
+### UI & Chart Improvements
+- [x] Fix Chart Rendering (Black Screen) - Upgraded Lightweight Charts to v4.1.1
+- [x] Fix Chart Y-Axis Scaling - Added zero-value filtering and auto-fit
+- [x] Fix Chart Sync Error (setCrosshairPosition) 
+- [x] Implement "Command Center" Layout
+- [x] Integrate Replay Mode into Main Dashboard
+- [x] Fix Popout Chart Signals
+- [x] Synchronize Charts (Zoom & Time)
 
-## Phase 4: Trading Widgets
-- [ ] Build market overview panel
-- [ ] Create positions/trades table
-- [ ] Implement PnL tracker widget
-- [ ] Add signals panel with filtering
-- [ ] Create order book visualization
-- [ ] Build strategy performance dashboard
+### Replay Mode & Data Flow
+- [x] Fix Replay Mode (LOAD/PLAY for BANKNIFTY)
+- [x] Fix Empty Strategies and Positions Panels
+- [x] Fix PCR Data and Status Sync
+- [x] Optimize Database (WAL mode enabled)
 
-## Phase 5: JavaScript Refactoring
-- [ ] Break down `script.js` into modules
-- [ ] Create WebSocket manager
-- [ ] Build chart manager class
-- [ ] Refactor data formatters
-- [ ] Remove duplicate functions
-- [ ] Add error handling and logging
+## 🔧 In Progress
 
-## Phase 6: Remove Duplicates
-- [ ] Delete redundant HTML templates
-- [ ] Consolidate duplicate CSS rules
-- [ ] Merge similar JavaScript functions
-- [ ] Update Python routes for new structure
+### Current Issue: NIFTY Replay Not Working
+- **Status**: BANKNIFTY replay works perfectly, NIFTY replay loads data but doesn't progress (stuck at 0/994)
+- **Investigation**: 
+  - Added debug logging to trace data flow
+  - Confirmed data is loaded (828 bars for index)
+  - Issue appears to be in `send_replay_step` or data alignment between Index/Options
+- **Next Steps**:
+  - Identify why replay loop doesn't increment for NIFTY
+  - Check time alignment between NIFTY spot and option data
+  - Verify symbol resolution for NIFTY options
 
-## Phase 7: Testing & Polish
-- [ ] Test WebSocket data flow
-- [ ] Verify chart interactions
-- [ ] Test responsive design
-- [ ] Performance optimization
-- [ ] Cross-browser testing
-- [ ] Final UI polish and animations
+## 📋 Pending Tasks
+
+### Performance & Optimization
+- [ ] Implement Trendlyne Data Caching
+- [ ] Optimize replay data loading for large datasets
+- [ ] Add loading states for better UX
+
+### Known Issues to Address
+- [ ] Fix NIFTY Replay progression
+- [ ] Chart header still shows "BANKNIFTY" when NIFTY is selected
+- [ ] Verify chart display edge cases
+
+## 📊 System Status
+
+**Server**: ✅ Running (stable with patched TvFeed)
+**Upstox Connection**: ⚠️ Thread shutdown warnings on exit (non-critical)
+**Charts**: ✅ Rendering correctly with proper scaling
+**Replay (BANKNIFTY)**: ✅ Fully functional
+**Replay (NIFTY)**: ❌ Loads but doesn't progress
+
+## 🎯 Priority for Next Session
+
+1. **HIGH**: Fix NIFTY replay data progression issue
+2. **MEDIUM**: Update chart header to reflect selected index
+3. **LOW**: Implement data caching for performance

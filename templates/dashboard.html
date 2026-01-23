@@ -1,220 +1,405 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OptionScalp Pro - Professional Trading Dashboard</title>
-    
-    <!-- Stylesheets -->
+    <title>OptionScalp Pro Command Center</title>
+
+    <!-- External Libraries -->
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+
+    <!-- CSS Variables -->
     <link rel="stylesheet" href="/static/css/variables.css">
-    <link rel="stylesheet" href="/static/css/components.css">
-    <link rel="stylesheet" href="/static/css/dashboard.css">
-    <link rel="stylesheet" href="/static/css/charts.css">
-    <link rel="stylesheet" href="/static/css/widgets.css">
-    
-    <!-- LightweightCharts Library -->
-    <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+
+    <style>
+        :root {
+            --header-height: 48px;
+            --panel-left: 300px;
+            --panel-right: 280px;
+            --border-color: #2A2E35;
+            --bg-deep: #08090C;
+            --bg-panel: #0B0D11;
+            --accent: #2962FF;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-deep);
+            color: #E0E3EB;
+            height: 100vh;
+            width: 100vw;
+            display: grid;
+            grid-template-rows: var(--header-height) 1fr;
+            overflow: hidden;
+        }
+
+        /* HEADER */
+        .cc-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            background: #13151A;
+            border-bottom: 1px solid var(--border-color);
+            z-index: 100;
+        }
+
+        .header-left,
+        .header-center,
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo {
+            font-weight: 800;
+            color: var(--accent);
+            letter-spacing: -0.5px;
+        }
+
+        .mode-switch {
+            background: #1E2128;
+            border-radius: 4px;
+            padding: 2px;
+            display: flex;
+            border: 1px solid var(--border-color);
+        }
+
+        .mode-btn {
+            padding: 4px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: #8B949E;
+            border-radius: 2px;
+            transition: all 0.2s;
+        }
+
+        .mode-btn.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        select,
+        input {
+            background: #1E2128;
+            border: 1px solid var(--border-color);
+            color: #E0E3EB;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        /* LAYOUT MAIN */
+        .cc-main {
+            display: grid;
+            grid-template-columns: var(--panel-left) 1fr var(--panel-right);
+            height: 100%;
+            overflow: hidden;
+        }
+
+        /* PANELS */
+        .panel {
+            background: var(--bg-panel);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            height: 100%;
+        }
+
+        .panel-right {
+            border-right: none;
+            border-left: 1px solid var(--border-color);
+        }
+
+        .panel-header {
+            padding: 8px 12px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #8B949E;
+            background: #13151A;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .scrollable {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        /* ACTION STREAM */
+        .stream-item {
+            padding: 10px;
+            background: #161920;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            border-left: 3px solid #2A2E35;
+            font-size: 12px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .stream-item.bullish {
+            border-left-color: #10B981;
+        }
+
+        .stream-item.bearish {
+            border-left-color: #EF4444;
+        }
+
+        /* CENTER AREA: CHARTS */
+        .cc-charts-area {
+            display: grid;
+            grid-template-rows: 60% 40%;
+            height: 100%;
+            min-height: 0;
+            background: #000;
+        }
+
+        .chart-box {
+            position: relative;
+            border-bottom: 1px solid var(--border-color);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-box-bottom {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            height: 100%;
+        }
+
+        .sub-chart-box {
+            position: relative;
+            border-right: 1px solid var(--border-color);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-label {
+            position: absolute;
+            top: 4px;
+            left: 8px;
+            z-index: 50;
+            font-size: 11px;
+            font-weight: 700;
+            color: rgba(255, 255, 255, 0.5);
+            pointer-events: none;
+            text-transform: uppercase;
+        }
+
+        /* CRITICAL: Constrained Chart Container */
+        .chart-container-root {
+            position: relative;
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            min-height: 0;
+            /* Important for flex children */
+        }
+
+        .chart-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* WIDGETS */
+        .badge {
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 700;
+        }
+
+        .badge-success {
+            background: #064E3B;
+            color: #10B981;
+        }
+
+        .badge-danger {
+            background: #451212;
+            color: #EF4444;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            font-size: 12px;
+        }
+
+        .stat-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+        }
+
+        /* REPLAY OVERLAY */
+        #replay-controls {
+            display: none;
+        }
+
+        /* SCROLLBAR */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 10px;
+        }
+    </style>
 </head>
+
 <body>
-    <div class="dashboard-container">
-        <!-- Header -->
-        <header class="dashboard-header">
-            <div class="brand">
-                <div class="brand-icon">OS</div>
-                <span>OptionScalp Pro</span>
+
+    <header class="cc-header">
+        <div class="header-left">
+            <div class="logo">OS:PRO</div>
+            <div class="mode-switch">
+                <button class="mode-btn active" id="btn-mode-live">LIVE</button>
+                <button class="mode-btn" id="btn-mode-replay">REPLAY</button>
             </div>
-            
-            <div class="header-controls">
-                <select id="index-select" class="select symbol-selector">
-                    <option value="BANKNIFTY">BANKNIFTY</option>
-                    <option value="NIFTY">NIFTY</option>
-                </select>
-                
-                <button id="btn-live" class="btn btn-primary">
-                    <span>●</span> Go Live
-                </button>
-                
-                <button id="btn-replay" class="btn btn-secondary">
-                    ⏯ Replay Mode
-                </button>
-                
-                <div class="status-indicator">
-                    <span class="status-dot"></span>
-                    <span id="status-text">Ready</span>
-                </div>
+            <select id="index-select">
+                <option value="BANKNIFTY">BANKNIFTY</option>
+                <option value="NIFTY">NIFTY</option>
+            </select>
+        </div>
+
+        <div class="header-center" id="replay-controls">
+            <input type="date" id="replay-date">
+            <button id="btn-replay-start"
+                style="background:var(--accent); color:white; border:none; padding:4px 10px; border-radius:4px; font-size:11px; cursor:pointer;">LOAD</button>
+            <div style="width:1px; height:20px; background:#333;"></div>
+            <button id="btn-replay-play" class="mode-btn">▶</button>
+            <button id="btn-replay-pause" class="mode-btn">⏸</button>
+            <span id="replay-time" style="font-family:monospace; font-size:11px; color:#8B949E;">0 / 0</span>
+        </div>
+
+        <div class="header-right">
+            <div style="display:flex; align-items:center; gap:6px;">
+                <div id="status-dot" style="width:8px; height:8px; border-radius:50%; background:#EF4444;"></div>
+                <span id="status-text" style="font-size:11px; color:#8B949E;">Connecting...</span>
             </div>
-        </header>
+        </div>
+    </header>
 
-        <!-- Main Content -->
-        <main class="dashboard-main">
-            <!-- Left Sidebar -->
-            <aside class="dashboard-sidebar">
-                <div class="sidebar-section">
-                    <div class="sidebar-section-title">Market Overview</div>
-                    <div class="market-overview">
-                        <div class="market-metric">
-                            <div class="metric-label">
-                                <span class="metric-name">Index Price</span>
-                                <span id="index-price" class="metric-value">--</span>
-                            </div>
-                            <div id="index-change" class="metric-change">
-                                <span>--</span>
-                            </div>
-                        </div>
-                        
-                        <div class="market-metric">
-                            <div class="metric-label">
-                                <span class="metric-name">Trend</span>
-                                <span id="market-trend" class="metric-value">--</span>
-                            </div>
-                        </div>
-                        
-                        <div class="market-metric">
-                            <div class="metric-label">
-                                <span class="metric-name">PCR</span>
-                                <span id="pcr-value" class="metric-value">--</span>
-                            </div>
-                            <div id="pcr-status" class="badge badge-neutral">--</div>
-                        </div>
-                    </div>
-                </div>
+    <main class="cc-main">
+        <!-- LEFT: SIGNALS -->
+        <aside class="panel">
+            <div class="panel-header">Action Stream</div>
+            <div id="action-stream" class="scrollable"></div>
+        </aside>
 
-                <div class="sidebar-section sidebar-scroll">
-                    <div class="sidebar-section-title">Active Signals</div>
-                    <div id="signals-panel" class="signals-panel">
-                        <div class="empty-state">
-                            <div class="empty-state-icon">📊</div>
-                            <div class="empty-state-text">No signals yet</div>
-                        </div>
-                    </div>
-                </div>
-            </aside>
-
-            <!-- Chart Area -->
-            <div class="dashboard-charts">
-                <div class="chart-grid chart-grid-3" id="chart-grid">
-                    <!-- Index Chart -->
-                    <div class="chart-wrapper">
-                        <div class="chart-header">
-                            <div class="chart-title">
-                                <span class="chart-symbol" id="index-symbol">INDEX</span>
-                                <span class="chart-price" id="index-price-display">--</span>
-                            </div>
-                            <div class="chart-controls">
-                                <button class="chart-control-btn" data-action="fullscreen" data-chart="index" title="Fullscreen">⛶</button>
-                                <a href="#" id="index-popout-btn" target="_blank" class="chart-control-btn" title="Pop-out">↗</a>
-                            </div>
-                        </div>
-                        <div class="chart-canvas" id="index-chart"></div>
-                    </div>
-
-                    <!-- CE Chart -->
-                    <div class="chart-wrapper">
-                        <div class="chart-header">
-                            <div class="chart-title">
-                                <span class="chart-symbol" id="ce-symbol">CE OPTION</span>
-                                <span class="chart-price" id="ce-price-display">--</span>
-                            </div>
-                            <div class="chart-controls">
-                                <button class="chart-control-btn" data-action="fullscreen" data-chart="ce" title="Fullscreen">⛶</button>
-                                <a href="#" id="ce-popout-btn" target="_blank" class="chart-control-btn" title="Pop-out">↗</a>
-                            </div>
-                        </div>
-                        <div class="chart-canvas" id="ce-chart"></div>
-                    </div>
-
-                    <!-- PE Chart -->
-                    <div class="chart-wrapper">
-                        <div class="chart-header">
-                            <div class="chart-title">
-                                <span class="chart-symbol" id="pe-symbol">PE OPTION</span>
-                                <span class="chart-price" id="pe-price-display">--</span>
-                            </div>
-                            <div class="chart-controls">
-                                <button class="chart-control-btn" data-action="fullscreen" data-chart="pe" title="Fullscreen">⛶</button>
-                                <a href="#" id="pe-popout-btn" target="_blank" class="chart-control-btn" title="Pop-out">↗</a>
-                            </div>
-                        </div>
-                        <div class="chart-canvas" id="pe-chart"></div>
-                    </div>
+        <!-- CENTER: CHARTS -->
+        <section class="cc-charts-area">
+            <div class="chart-box">
+                <div class="chart-label" id="index-symbol">INDEX</div>
+                <div class="chart-container-root">
+                    <div id="index-chart" class="chart-canvas"></div>
                 </div>
             </div>
 
-            <!-- Right Panel -->
-            <aside class="dashboard-panel">
-                <div class="panel-tabs">
-                    <button class="panel-tab active" data-tab="pnl">P&L</button>
-                    <button class="panel-tab" data-tab="positions">Positions</button>
-                    <button class="panel-tab" data-tab="strategies">Strategies</button>
-                </div>
-
-                <div class="panel-content">
-                    <!-- PnL Tab -->
-                    <div id="pnl-tab" class="panel-tab-content active">
-                        <div class="pnl-widget">
-                            <div class="card-title">Total P&L</div>
-                            <div id="pnl-main-value" class="pnl-main-value">₹0.00</div>
-                            
-                            <div class="pnl-stats-grid">
-                                <div class="pnl-stat">
-                                    <div id="pnl-closed" class="pnl-stat-value">0</div>
-                                    <div class="pnl-stat-label">Closed Trades</div>
-                                </div>
-                                <div class="pnl-stat">
-                                    <div id="pnl-open" class="pnl-stat-value">0</div>
-                                    <div class="pnl-stat-label">Open Trades</div>
-                                </div>
-                                <div class="pnl-stat">
-                                    <div id="pnl-wins" class="pnl-stat-value text-success">0</div>
-                                    <div class="pnl-stat-label">Wins</div>
-                                </div>
-                                <div class="pnl-stat">
-                                    <div id="pnl-losses" class="pnl-stat-value text-danger">0</div>
-                                    <div class="pnl-stat-label">Losses</div>
-                                </div>
-                            </div>
-                            
-                            <div class="win-rate-indicator">
-                                <div class="win-rate-bar">
-                                    <div id="win-rate-fill" class="win-rate-fill" style="width: 0%"></div>
-                                </div>
-                                <div id="win-rate-text" class="win-rate-text">Win Rate: 0%</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Positions Tab -->
-                    <div id="positions-tab" class="panel-tab-content" style="display: none;">
-                        <div class="positions-widget">
-                            <div class="positions-header">
-                                <span class="card-title">Active Positions</span>
-                                <span id="positions-count" class="positions-count">0 positions</span>
-                            </div>
-                            <div id="positions-list">
-                                <div class="empty-state">
-                                    <div class="empty-state-icon">📋</div>
-                                    <div class="empty-state-text">No active positions</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Strategies Tab -->
-                    <div id="strategies-tab" class="panel-tab-content" style="display: none;">
-                        <div class="card-title" style="margin-bottom: var(--space-3);">Strategy Performance</div>
-                        <div id="strategy-performance" class="strategy-performance">
-                            <div class="empty-state">
-                                <div class="empty-state-icon">⚡</div>
-                                <div class="empty-state-text">No strategy data yet</div>
-                            </div>
-                        </div>
+            <div class="chart-box-bottom">
+                <div class="sub-chart-box">
+                    <div class="chart-label" id="ce-symbol">CE</div>
+                    <div class="chart-container-root">
+                        <div id="ce-chart" class="chart-canvas"></div>
                     </div>
                 </div>
-            </aside>
-        </main>
-    </div>
+                <div class="sub-chart-box" style="border-right:none;">
+                    <div class="chart-label" id="pe-symbol">PE</div>
+                    <div class="chart-container-root">
+                        <div id="pe-chart" class="chart-canvas"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
 
-    <!-- JavaScript Modules -->
+        <!-- RIGHT: STATS -->
+        <aside class="panel panel-right">
+            <div class="panel-header">Market Context</div>
+            <div class="scrollable">
+                <div
+                    style="background:#161920; padding:12px; border-radius:6px; margin-bottom:12px; border:1px solid var(--border-color);">
+                    <div class="stat-row">
+                        <span style="color:#8B949E;">Trend</span>
+                        <span id="market-trend" class="stat-val">--</span>
+                    </div>
+                    <div class="stat-row">
+                        <span style="color:#8B949E;">PCR</span>
+                        <span id="pcr-value" class="stat-val">--</span>
+                    </div>
+                    <div id="pcr-status" style="text-align:center; font-size:10px; margin-top:8px;"
+                        class="badge badge-neutral">NEUTRAL</div>
+                </div>
+
+                <div class="panel-header" style="margin: -8px -8px 8px -8px;">Positions</div>
+                <div id="positions-list"></div>
+
+                <div class="panel-header" style="margin: 0 -8px 8px -8px;">Analysis</div>
+                <div
+                    style="background:#161920; padding:12px; border-radius:6px; margin-bottom:12px; border:1px solid var(--border-color);">
+                    <div class="stat-row"><span style="color:#8B949E;">Max DD</span> <span id="ana-dd"
+                            class="stat-val">₹0</span></div>
+                    <div class="stat-row"><span style="color:#8B949E;">Avg Win</span> <span id="ana-avg-win"
+                            class="stat-val">₹0</span></div>
+                    <div class="stat-row"><span style="color:#8B949E;">Avg Loss</span> <span id="ana-avg-loss"
+                            class="stat-val">₹0</span></div>
+                    <div class="stat-row"><span style="color:#8B949E;">Risk:Reward</span> <span id="ana-rr"
+                            class="stat-val">0.00</span></div>
+                </div>
+
+                <div style="margin-top:20px;">
+                    <div class="panel-header" style="margin: 0 -8px 8px -8px;">Performance</div>
+                    <div class="stat-row"><span>Total P&L</span> <span id="pnl-main-value" class="stat-val">₹0</span>
+                    </div>
+                    <div style="height:4px; background:#1E2128; border-radius:2px; margin:8px 0; overflow:hidden;">
+                        <div id="win-rate-fill" style="width:0%; height:100%; background:var(--accent);"></div>
+                    </div>
+                    <div id="win-rate-text" style="font-size:10px; text-align:right; color:#8B949E;">Win Rate: 0%</div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
     <script src="/static/js/main.js" type="module"></script>
 </body>
+
 </html>

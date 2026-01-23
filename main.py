@@ -82,12 +82,13 @@ class SessionState:
         self.ce_history = []
         self.pe_history = []
         self.last_total_volumes = {} # Track cumulative volumes to calculate deltas
-        self.pcr_insights = None
         self.upstox_client = None
         self.websocket = None
         self.subscribed_symbols = set()
         self.last_subscribed_candle = {} # symbol -> candle
         self.subscribed_history = {} # symbol -> list of candles
+        self.last_trendlyne_fetch = 0 # timestamp
+        self.cached_delta_signals = None
 
     def reset_strategies(self):
         """Recreate strategy instances to clear internal variables."""
@@ -95,10 +96,6 @@ class SessionState:
             "CE": [s() for s in STRATEGIES],
             "PE": [s() for s in STRATEGIES],
             "INDEX": [s() for s in STRATEGIES]
-        }
-        self.tf_strategies = {
-            "CE": TrendFollowingStrategy(),
-            "PE": TrendFollowingStrategy()
         }
         self.tf_main = TrendFollowingStrategy()
 
@@ -208,7 +205,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.index_sym = f"NSE:{index_raw}"
                     index_sym = index_raw # base symbol for DataManager
                     state.tf_main.update_params(index_sym)
-                    for k in state.tf_strategies: state.tf_strategies[k].update_params(index_sym)
 
                     idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000)
                     if not idx_df.empty: idx_df = idx_df.between_time('03:45', '10:00')
@@ -322,24 +318,36 @@ async def websocket_endpoint(websocket: WebSocket):
                             "strategy": t.strategy_name
                         })
 
-                    await websocket.send_json(clean_json({
-                        "type": "live_data",
-                        "index_symbol": index_sym,
-                        "index_data": format_records(idx_df),
-                        "ce_data": ce_recs,
-                        "pe_data": pe_recs,
-                        "ce_markers": state.ce_markers,
-                        "pe_markers": state.pe_markers,
-                        "ce_symbol": state.ce_sym,
-                        "pe_symbol": state.pe_sym,
-                        "trend": state.tf_main.get_trend(idx_df.iloc[-50:], state.pcr_insights),
-                        "delta_signals": delta_signals,
-                        "pcr_insights": state.pcr_insights,
-                        "pnl_stats": state.pnl_tracker.get_stats(),
-                        "new_signals": historical_signals,
-                        "strategy_report": strategy_report,
-                        "active_positions": active_positions
-                    }))
+                    try:
+                        if websocket.client_state == WebSocketState.CONNECTED:
+                            await websocket.send_json(clean_json({
+                                "type": "live_data",
+                                "index_symbol": index_sym,
+                                "index_data": format_records(idx_df),
+                                "ce_data": ce_recs,
+                                "pe_data": pe_recs,
+                                "ce_markers": state.ce_markers,
+                                "pe_markers": state.pe_markers,
+                                "ce_symbol": state.ce_sym,
+                                "pe_symbol": state.pe_sym,
+                                "trend": state.tf_main.get_trend(idx_df.iloc[-50:], state.pcr_insights) if not idx_df.empty else "NEUTRAL",
+                                "delta_signals": delta_signals,
+                                "pcr_insights": state.pcr_insights,
+                                "pnl_stats": state.pnl_tracker.get_stats(),
+                                "new_signals": historical_signals,
+                                "strategy_report": strategy_report,
+                                "active_positions": active_positions # Send positions
+                            }))
+                    except (RuntimeError, WebSocketDisconnect):
+                        logger.warning("WebSocket closed during send. Stopping loop.")
+                        break
+                    except Exception as e:
+                        # Catch ClientDisconnected from uvicorn which might not be imported but happens
+                        if "ClientDisconnected" in str(e) or "1006" in str(e):
+                             logger.warning("Client disconnected.")
+                             break
+                        logger.error(f"Error in listen loop: {e}")
+                        continue
 
                     feed_manager.subscribe(live_callback)
                     
@@ -424,6 +432,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json({"type": "reset_ui"})
 
                     index_sym = data['index']
+                    if not index_sym.startswith("NSE:"):
+                        index_sym = f"NSE:{index_sym}"
+                    state.index_sym = index_sym
 
                     ref_date = None
                     if data.get('date'):
@@ -440,8 +451,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.pcr_insights = pcr_res.get('insights', {})
                     state.buildup_history = pcr_res.get('buildup_list', [])
 
+                    logger.info(f"Replay init for {index_sym} on {data.get('date')}")
                     state.tf_main.update_params(index_sym)
-                    for k in state.tf_strategies: state.tf_strategies[k].update_params(index_sym)
                     state.replay_data_idx = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
                     if not state.replay_data_idx.empty:
                         state.replay_data_idx = state.replay_data_idx.between_time('03:45', '10:00')
@@ -461,6 +472,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if not state.replay_data_pe.empty: state.replay_data_pe = state.replay_data_pe.between_time('03:45', '10:00')
 
                     if state.replay_data_ce.empty or state.replay_data_pe.empty:
+                        logger.error(f"Replay Error: Missing options data. CE: {len(state.replay_data_ce)}, PE: {len(state.replay_data_pe)}")
                         await websocket.send_json({"type": "error", "message": f"Option data not found for {state.ce_sym} or {state.pe_sym} in market hours."})
                         return
 
@@ -469,6 +481,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.pe_markers = []
                     state.is_playing = True
                     
+                    logger.info(f"Replay ready. Max Index: {min(len(state.replay_data_ce), len(state.replay_data_pe))}")
+
                     # Start Replay Loop
                     asyncio.create_task(replay_loop(websocket, state))
 
@@ -479,6 +493,16 @@ async def websocket_endpoint(websocket: WebSocket):
                         "current_idx": state.replay_idx
                     })
                     await send_replay_step(websocket, state)
+
+                elif data['type'] == 'replay_control':
+                    action = data.get('action')
+                    if action == 'play':
+                        state.is_playing = True
+                        asyncio.create_task(replay_loop(websocket, state))
+                        logger.info("Replay RESUMED")
+                    elif action == 'pause':
+                        state.is_playing = False
+                        logger.info("Replay PAUSED")
 
                 elif data['type'] == 'run_backtest':
                     await run_full_backtest(websocket, state, data['index'], data.get('date', '2026-01-22'))
@@ -523,6 +547,22 @@ async def websocket_endpoint(websocket: WebSocket):
                             "symbol": sub_sym,
                             "data": recs
                         }))
+
+                        # Also send existing MARKERS for this symbol
+                        markers_to_send = []
+                        if sub_sym == state.ce_sym:
+                            markers_to_send = state.ce_markers
+                        elif sub_sym == state.pe_sym:
+                            markers_to_send = state.pe_markers
+                        
+                        if markers_to_send:
+                            await websocket.send_json(clean_json({
+                                "type": "marker_history",
+                                "symbol": sub_sym,
+                                "markers": markers_to_send
+                            }))
+                            logger.info(f"Sent {len(markers_to_send)} historical markers for {sub_sym}")
+
 
         except Exception as e:
             logger.exception("Listen Error")
@@ -685,7 +725,18 @@ async def send_replay_step(websocket, state, send=True):
         # Matching slice for index
         idx_full = state.replay_data_idx[state.replay_data_idx.index <= last_time]
         sub_idx = idx_full.iloc[-50:]
-        if sub_idx.empty: return
+        
+        if sub_ce.empty or sub_pe.empty:
+            with open("replay_debug.log", "a") as f:
+                f.write(f"ABORT OPTION: Idx={state.replay_idx}, CE={len(sub_ce)}, PE={len(sub_pe)}\n")
+            logger.warning(f"Replay Step Aborted: Options slice empty. CE={len(sub_ce)}, PE={len(sub_pe)}")
+            return
+
+        if sub_idx.empty:
+             with open("replay_debug.log", "a") as f:
+                f.write(f"ABORT INDEX: Idx={state.replay_idx}, Time={last_time}, IndexLen={len(idx_full)}\n")
+             logger.warning(f"Replay Step Aborted: Index slice empty for time {last_time} (Index Len: {len(idx_full)})")
+             return
 
         # 3. Initialize Context
         if not state.pcr_insights:
@@ -747,6 +798,7 @@ async def send_replay_step(websocket, state, send=True):
             "pe_markers": state.pe_markers,
             "ce_symbol": state.ce_sym,
             "pe_symbol": state.pe_sym,
+            "index_symbol": state.index_sym,
             "trend": trend,
             "max_idx": min(len(state.replay_data_ce), len(state.replay_data_pe)),
             "current_idx": state.replay_idx,
@@ -755,9 +807,15 @@ async def send_replay_step(websocket, state, send=True):
         }
 
         if send:
-            await websocket.send_json(clean_json(msg))
+            json_msg = clean_json(msg)
+            # logger.info(f"Sending replay_step: Index={len(idx_recs)}, CE={len(ce_recs)}, PE={len(pe_recs)}")
+            with open("replay_debug.log", "a") as f:
+                f.write(f"SENT: Idx={state.replay_idx}, CE={len(ce_recs)}, PE={len(pe_recs)}\n")
+            await websocket.send_json(json_msg)
     except Exception as e:
-        print(f"ERROR in send_replay_step: {e}")
+        logger.error(f"ERROR in send_replay_step: {e}")
+        import traceback
+        traceback.print_exc()
 
 async def replay_loop(websocket, state):
     """Background task to drive the replay."""
@@ -929,7 +987,9 @@ def clean_json(obj):
         return {k: clean_json(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [clean_json(i) for i in obj]
-    elif isinstance(obj, (np.float64, np.float32, np.float16)):
+    elif isinstance(obj, (np.float64, np.float32, np.float16, float)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
         return float(obj)
     elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8)):
         return int(obj)
@@ -1046,15 +1106,44 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time,
     Returns a list of signals triggered.
     """
     new_signals = []
-    sl_dist = 30 if "BANK" in state.index_sym else 20
-
+    
     if not is_within_trading_window(last_time):
         return new_signals
 
-    # A. Index-driven strategies
+    # 1. Update Primary Trend (Unified)
+    trend = state.tf_main.get_trend(idx_df, state.pcr_insights)
+    state.tf_main.update_params(state.index_sym)
+
+    # 2. Check Trend Following (Unified)
+    # CE
+    if not ce_df.empty: 
+        ce_tf = state.tf_main.check_setup_unified(idx_df, ce_df, state.pcr_insights, "CE")
+        if ce_tf and check_option_ema_filter(ce_df):
+             ce_tf['strat_name'] = "TREND_FOLLOWING"
+             ce_tf['time'] = candle_time
+             ce_tf['is_pe'] = False
+             if handle_new_trade(state, "TREND_FOLLOWING", state.ce_sym, ce_tf, candle_time, store=record_trades, store_db=store_db):
+                 logger.info(f"SIGNAL FIRED: TREND_FOLLOWING on {state.ce_sym}")
+                 new_signals.append(ce_tf)
+
+    # PE
+    if not pe_df.empty:
+        pe_tf = state.tf_main.check_setup_unified(idx_df, pe_df, state.pcr_insights, "PE")
+        if pe_tf and check_option_ema_filter(pe_df):
+             pe_tf['strat_name'] = "TREND_FOLLOWING"
+             pe_tf['time'] = candle_time
+             pe_tf['is_pe'] = True
+             if handle_new_trade(state, "TREND_FOLLOWING", state.pe_sym, pe_tf, candle_time, store=record_trades, store_db=store_db):
+                 logger.info(f"SIGNAL FIRED: TREND_FOLLOWING on {state.pe_sym}")
+                 new_signals.append(pe_tf)
+
+    # 3. Check Other Strategies (Index Driven)
     if not idx_df.empty and len(idx_df) >= 20:
         for strat in state.strategies["INDEX"]:
-            if strat.is_index_driven or any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
+            # Skip old TrendLogic if present to avoid dupes
+            if strat.name == "TREND_FOLLOWING": continue
+            
+            if strat.is_index_driven: # Simplified check
                 setup = strat.check_setup(idx_df, state.pcr_insights)
                 if setup:
                     s_type = setup.get('type', '').upper()
@@ -1062,65 +1151,40 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time,
                     target_df = pe_df if is_pe_trade else ce_df
                     target_sym = state.pe_sym if is_pe_trade else state.ce_sym
 
-                    if target_df.empty:
-                        logger.info(f"Skipping {strat.name}: No data for {target_sym}")
-                        continue
-                    if not check_option_ema_filter(target_df):
-                        logger.info(f"Skipping {strat.name}: EMA Filter failed for {target_sym}")
-                        continue
+                    if target_df.empty or not check_option_ema_filter(target_df): continue
 
                     setup['strat_name'] = strat.name
                     setup['time'] = candle_time
-                    setup['entry_price'] = setup.get('entry_price') or target_df['close'].iloc[-1]
-                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
-                    setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
+                    # CRITICAL FIX: Use option price, not index price for entry
+                    # Index-driven strategies analyze index but we trade OPTIONS
+                    setup['entry_price'] = target_df['close'].iloc[-1]  # Option premium
+                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - 20)
+                    setup['target'] = setup.get('target') or (setup['entry_price'] + 40)
                     setup['is_pe'] = is_pe_trade
 
                     if handle_new_trade(state, strat.name, target_sym, setup, candle_time, store=record_trades, store_db=store_db):
-                        logger.info(f"SIGNAL FIRED: {strat.name} on {target_sym} at {setup['entry_price']}")
+                        logger.info(f"SIGNAL FIRED: {strat.name} on {target_sym}")
                         new_signals.append(setup)
 
-    # B. Option-driven strategies
-    for side, df, strat_list, sym in [
-        ("CE", ce_df, state.strategies["CE"], state.ce_sym),
-        ("PE", pe_df, state.strategies["PE"], state.pe_sym)
-    ]:
+    # 4. Check Other Strategies (Option Driven)
+    for side, df, strat_list, sym in [("CE", ce_df, state.strategies["CE"], state.ce_sym), ("PE", pe_df, state.strategies["PE"], state.pe_sym)]:
         if df.empty or len(df) < 20: continue
-
-        # Check standard option strats
         for strat in strat_list:
-            if not strat.is_index_driven and not any(x in strat.name for x in ["INDEX", "INSTITUTIONAL", "ROUND_LEVEL", "SAMPLE_TREND", "SCREENER", "GAP_FILL"]):
+            if strat.name == "TREND_FOLLOWING": continue
+            
+            if not strat.is_index_driven:
                 setup = strat.check_setup(df, state.pcr_insights)
-                if setup:
-                    if not check_option_ema_filter(df):
-                        logger.info(f"Skipping {strat.name}: EMA Filter failed for {sym}")
-                        continue
-
+                if setup and check_option_ema_filter(df):
                     setup['strat_name'] = strat.name
                     setup['time'] = candle_time
                     setup['entry_price'] = setup.get('entry_price') or df['close'].iloc[-1]
-                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - sl_dist)
-                    setup['target'] = setup.get('target') or (setup['entry_price'] + sl_dist * 2)
+                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - 20)
+                    setup['target'] = setup.get('target') or (setup['entry_price'] + 40)
                     setup['is_pe'] = (side == "PE")
 
                     if handle_new_trade(state, strat.name, sym, setup, candle_time, store=record_trades, store_db=store_db):
-                        logger.info(f"SIGNAL FIRED: {strat.name} on {sym} at {setup['entry_price']}")
+                        logger.info(f"SIGNAL FIRED: {strat.name} on {sym}")
                         new_signals.append(setup)
-
-        # Check Trend Following
-        tf_strat = state.tf_strategies[side]
-        tf_setup = tf_strat.check_setup_unified(idx_df, df, state.pcr_insights, side)
-        if tf_setup:
-            if check_option_ema_filter(df):
-                tf_setup['strat_name'] = tf_strat.name
-                tf_setup['time'] = candle_time
-                tf_setup['entry_price'] = tf_setup.get('entry_price') or df['close'].iloc[-1]
-                tf_setup['sl'] = tf_setup.get('sl') or (tf_setup['entry_price'] - sl_dist)
-                tf_setup['target'] = tf_setup.get('target') or (tf_setup['entry_price'] + sl_dist * 2)
-                tf_setup['is_pe'] = (side == "PE")
-
-                if handle_new_trade(state, tf_strat.name, sym, tf_setup, candle_time, store=record_trades, store_db=store_db):
-                    new_signals.append(tf_setup)
 
     return new_signals
 
@@ -1293,10 +1357,18 @@ async def handle_live_update(websocket, state, update):
         # Every new candle, also refresh Trendlyne signals and PCR if in live mode
         if is_index:
             strike = dm.get_atm_strike(update['price'], step=100 if "BANK" in clean_symbol else 50)
-            delta_signals = await fetch_trendlyne_signals(clean_symbol, strike)
-            pcr_res = await fetch_pcr_insights(clean_symbol)
-            state.pcr_insights = pcr_res.get('insights', {})
-            state.buildup_history = pcr_res.get('buildup_list', [])
+            
+            # Caching Trendlyne Fetch (Once every 60 seconds)
+            current_now = datetime.now().timestamp()
+            if current_now - state.last_trendlyne_fetch > 60:
+                delta_signals = await fetch_trendlyne_signals(clean_symbol, strike)
+                pcr_res = await fetch_pcr_insights(clean_symbol)
+                state.pcr_insights = pcr_res.get('insights', {})
+                state.buildup_history = pcr_res.get('buildup_list', [])
+                state.cached_delta_signals = delta_signals
+                state.last_trendlyne_fetch = current_now
+            else:
+                delta_signals = state.cached_delta_signals
 
             # Option Chain handling if Upstox is enabled
             option_chain_data = None
