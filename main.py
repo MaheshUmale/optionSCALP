@@ -409,13 +409,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     if use_upstox:
                         live_feed = feed_manager.get_upstox_feed(config.ACCESS_TOKEN)
                         inst_key = dm.get_upstox_key_for_tv_symbol(sub_sym)
+                        logger.info(f"Resolved {sub_sym} to Upstox key: {inst_key}")
                         if inst_key:
                              # Resolve the actual trading symbol from the master to ensure consistency
-                             # If sub_sym is NSE:NIFTY, it maps to NSE_INDEX|Nifty 50.
-                             # If we add_symbols with sub_sym as the display name, it will be used in updates.
                              live_feed.add_symbols([{"symbol": sub_sym, "key": inst_key}])
                         else:
                              # Fallback: use sub_sym as both if not found in master
+                             logger.warning(f"Could not resolve Upstox key for {sub_sym}, using fallback")
                              live_feed.add_symbols([{"symbol": sub_sym, "key": sub_sym}])
                     else:
                         live_feed = feed_manager.get_tv_feed()
