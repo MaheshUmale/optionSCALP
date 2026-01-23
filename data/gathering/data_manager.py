@@ -23,6 +23,7 @@ class DataManager:
         self.db = DatabaseManager()
         self._instrument_df = None
         self.upstox_client = None
+        self.key_cache = {} # Cache for instrument mapping
 
     def set_upstox_client(self, client):
         self.upstox_client = client
@@ -121,10 +122,15 @@ class DataManager:
             if opt_df.empty: continue
             
             # Robust date parsing: handle both numeric and string
-            opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
-            # If all are NaT, they might be unix timestamps in ms
-            if opt_df['expiry_dt'].isna().all():
-                opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], origin='unix', unit='ms', errors='coerce')
+            # Upstox master often uses milliseconds (e.g. 1.7e12)
+            try:
+                num_exp = pd.to_numeric(opt_df['expiry'], errors='coerce')
+                if not num_exp.isna().all() and num_exp.dropna().mean() > 1e11:
+                    opt_df['expiry_dt'] = pd.to_datetime(num_exp, origin='unix', unit='ms', errors='coerce')
+                else:
+                    opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
+            except:
+                opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
 
             nearest_expiry = opt_df['expiry_dt'].min()
             near_opt_df = opt_df[opt_df['expiry_dt'] == nearest_expiry]
@@ -161,12 +167,32 @@ class DataManager:
                 "options": option_keys,
                 "all_keys": [current_fut_key] + [opt['ce'] for opt in option_keys] + [opt['pe'] for opt in option_keys]
             }
+
+            # Populate Cache for consistent resolution
+            if symbol == "NIFTY": self.key_cache["NSE:NIFTY"] = "NSE_INDEX|Nifty 50"
+            elif symbol == "BANKNIFTY": self.key_cache["NSE:BANKNIFTY"] = "NSE_INDEX|Nifty Bank"
+
+            if current_fut_key:
+                self.key_cache[f"NSE:{current_fut_tsym}"] = current_fut_key
+
+            for opt in option_keys:
+                expiry_dt = pd.to_datetime(nearest_expiry)
+                expiry_short = expiry_dt.strftime('%y%m%d')
+                strike_int = int(opt['strike'])
+                self.key_cache[f"NSE:{symbol}{expiry_short}C{strike_int}"] = opt['ce']
+                self.key_cache[f"NSE:{symbol}{expiry_short}P{strike_int}"] = opt['pe']
+                self.key_cache[f"NSE:{opt['ce_trading_symbol']}"] = opt['ce']
+                self.key_cache[f"NSE:{opt['pe_trading_symbol']}"] = opt['pe']
+
         return full_mapping
 
     def get_upstox_key_for_tv_symbol(self, tv_symbol):
         """
         Maps a TradingView symbol or Upstox Trading Symbol to Upstox instrument key.
         """
+        if tv_symbol in self.key_cache:
+            return self.key_cache[tv_symbol]
+
         df = self.get_upstox_instruments_df()
         if df.empty: return None
 
@@ -193,10 +219,15 @@ class DataManager:
                         (df['strike_price'] == strike)].copy()
             
             if not opt_df.empty:
-                # Filter by expiry_short (YYMMDD)
-                opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
-                if opt_df['expiry_dt'].isna().all():
-                    opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], origin='unix', unit='ms', errors='coerce')
+                # Robust date parsing
+                try:
+                    num_exp = pd.to_numeric(opt_df['expiry'], errors='coerce')
+                    if not num_exp.isna().all() and num_exp.dropna().mean() > 1e11:
+                        opt_df['expiry_dt'] = pd.to_datetime(num_exp, origin='unix', unit='ms', errors='coerce')
+                    else:
+                        opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
+                except:
+                    opt_df['expiry_dt'] = pd.to_datetime(opt_df['expiry'], errors='coerce')
                 
                 # Convert to YYMMDD for matching
                 opt_df['expiry_short'] = opt_df['expiry_dt'].dt.strftime('%y%m%d')
