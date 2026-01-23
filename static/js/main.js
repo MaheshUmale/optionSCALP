@@ -103,10 +103,14 @@ class CommandController {
         if (data.type === 'live_data' || data.type === 'replay_step' || data.type === 'history_data') {
             this.updateUI(data);
 
-            // Replay progress update with strict check for 0
-            if (data.current_idx !== undefined && data.max_idx !== undefined) {
+            // Replay progress update with market time
+            if (data.market_time || (data.current_idx !== undefined && data.max_idx !== undefined)) {
                 const counter = document.getElementById('replay-time');
-                if (counter) counter.textContent = `${data.current_idx} / ${data.max_idx}`;
+                if (counter) {
+                    const timeStr = data.market_time ? ` [${data.market_time}] ` : ' ';
+                    const progress = (data.current_idx !== undefined) ? `${data.current_idx} / ${data.max_idx}` : '';
+                    counter.textContent = `${progress}${timeStr}`;
+                }
             }
 
             // Sync charts only on full data load
@@ -167,7 +171,14 @@ class CommandController {
         if (!container) return;
 
         const el = document.createElement('div');
-        const isBullish = signal.type === 'LONG' || signal.symbol?.includes('CE');
+
+        // Use sentiment if available, otherwise fallback to signal type
+        // Sentiment considers buildup (Short Covering/Long Build = BULLISH)
+        let isBullish = signal.type === 'LONG' || signal.symbol?.includes('CE');
+        if (signal.sentiment) {
+            isBullish = signal.sentiment === 'BULLISH';
+        }
+
         el.className = `stream-item ${isBullish ? 'bullish' : 'bearish'}`;
 
         // Robust 24h Formatter

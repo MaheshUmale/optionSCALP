@@ -69,13 +69,20 @@ export class ChartManager {
         chart.priceScale('right').applyOptions({
             autoScale: true,
             borderVisible: false,
-            scaleMargins: { top: 0.05, bottom: 0.05 },  // Minimum margins for maximum detail
+            scaleMargins: { top: 0.08, bottom: 0.08 },  // Moderate margins to balance zoom vs visibility
             minimumWidth: 80,
             alignLabels: true
         });
 
         // Add volume series
         const volumeSeries = chart.addHistogramSeries(CONFIG.VOLUME_STYLE);
+
+        // Configure volume scale explicitly
+        chart.priceScale('volume').applyOptions({
+            scaleMargins: CONFIG.VOLUME_STYLE.scaleMargins,
+            borderVisible: false,
+            alignLabels: false
+        });
 
         // Store references
         this.charts[id] = chart;
@@ -147,10 +154,32 @@ export class ChartManager {
         }
 
         // Store data for alignment/referencing
+        const isInitialLoad = !this.storedData[chartId] || this.storedData[chartId].length === 0;
         this.storedData[chartId] = candleData;
 
-        // Force fit content for proper scaling on load
-        this.charts[chartId].timeScale().fitContent();
+        // Scaling logic: 
+        // 1. On first load, fit content.
+        // 2. On subsequent updates (replay), maintain a fixed zoom window (e.g., 60 bars)
+        //    that follows the leading edge (the "live" candle).
+        if (isInitialLoad) {
+            this.charts[chartId].timeScale().fitContent();
+        } else {
+            // Smoothly track the leading edge
+            const chart = this.charts[chartId];
+            const lastCandle = candleData[candleData.length - 1];
+
+            // We want to see roughly 60 candles. 
+            // Lightweight charts works by logical index or time.
+            // Since we use setData with full slice, logical indices are reset.
+            // Let's use visible range based on time for stability.
+            const barsToShow = 60;
+            const startIndex = Math.max(0, candleData.length - barsToShow);
+
+            chart.timeScale().setVisibleRange({
+                from: candleData[startIndex].time,
+                to: lastCandle.time + (60 * 5) // Add 5 mins buffer on right
+            });
+        }
     }
 
     updateLiveCandle(chartId, candle) {

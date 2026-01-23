@@ -30,14 +30,19 @@ class Trade:
 class PnLTracker:
     def __init__(self):
         self.trades = []
-        self.total_pnl = 0
+        self.total_pnl = 0.0
         self.win_count = 0
         self.loss_count = 0
+        self.max_drawdown = 0.0
+        self.avg_win = 0.0
+        self.avg_loss = 0.0
+        self.unrealized_pnl = 0.0
+        self.net_total_pnl = 0.0
 
     def add_trade(self, trade):
         self.trades.append(trade)
 
-    def update_stats(self):
+    def update_stats(self, active_trades=None, current_prices=None):
         # Recalculate from closed trades
         self.total_pnl = 0
         self.win_count = 0
@@ -49,6 +54,7 @@ class PnLTracker:
         max_dd = 0
         current_pnl = 0
 
+        # 1. Process Closed Trades
         for t in self.trades:
             if t.status == 'CLOSED':
                 self.total_pnl += t.pnl
@@ -66,20 +72,38 @@ class PnLTracker:
                 else:
                     self.loss_count += 1
                     total_loss += abs(t.pnl)
+
+        # 2. Process Active Trades (Unrealized PnL)
+        self.unrealized_pnl = 0
+        if active_trades and current_prices:
+            for t in active_trades:
+                if t.symbol in current_prices:
+                    curr_price = current_prices[t.symbol]
+                    # We always BUY options (Long Volatility)
+                    # PnL = (Current Price - Entry Price)
+                    unrealized = curr_price - t.entry_price
+                    self.unrealized_pnl += unrealized
+                    
+                    # Update peak/dd logic tentatively for running drawdown
+                    # (Optional: might be too noisy, but accurate for "Total PnL")
+        
+        self.net_total_pnl = self.total_pnl + self.unrealized_pnl
         
         self.max_drawdown = max_dd
         self.avg_win = total_win / self.win_count if self.win_count > 0 else 0
         self.avg_loss = total_loss / self.loss_count if self.loss_count > 0 else 0
 
     def get_stats(self):
-        self.update_stats()
+        # Note: update_stats should be called before this with live data if needed
         closed_trades = [t for t in self.trades if t.status == 'CLOSED']
         total_closed = len(closed_trades)
         win_rate = (self.win_count / total_closed * 100) if total_closed > 0 else 0
         return {
             "total_trades": len(self.trades),
             "total_closed": total_closed,
-            "total_pnl": round(self.total_pnl, 2),
+            "total_pnl": round(self.net_total_pnl if hasattr(self, 'net_total_pnl') else self.total_pnl, 2),
+            "realized_pnl": round(self.total_pnl, 2),
+            "unrealized_pnl": round(getattr(self, 'unrealized_pnl', 0), 2),
             "win_count": self.win_count,
             "loss_count": self.loss_count,
             "win_rate": round(win_rate, 2),

@@ -10,9 +10,14 @@ import asyncio
 import numpy as np
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# PCR Cache Setup
+PCR_CACHE_DIR = Path(__file__).parent / "data" / "pcr_cache"
+PCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 from data.gathering.data_manager import DataManager
 from data.gathering.feed_manager import feed_manager
@@ -89,6 +94,8 @@ class SessionState:
         self.subscribed_history = {} # symbol -> list of candles
         self.last_trendlyne_fetch = 0 # timestamp
         self.cached_delta_signals = None
+        self.last_pcr_store_ts = 0
+        self.daily_pcr_history = {} # timestamp_str (HH:MM) -> {pcr, pcr_change, call_oi, put_oi}
 
     def reset_strategies(self):
         """Recreate strategy instances to clear internal variables."""
@@ -101,43 +108,45 @@ class SessionState:
 
     def load_trades_from_db(self):
         """Load trades from DB into PnLTracker for UI consistency."""
-        try:
-            trades_df = db.get_trades()
-            if trades_df.empty: return
-
-            # Filter for today or relevant session if needed
-            # For now, we load all to show history or filtered by strategy
-            for _, row in trades_df.iterrows():
-                t = Trade(
-                    symbol=row['symbol'],
-                    entry_price=row['entry_price'],
-                    strategy_name=row['strategy_name'],
-                    trade_type=row['trade_type'],
-                    time=row['entry_time']
-                )
-                t.status = row['status']
-                t.exit_price = row['exit_price']
-                t.exit_time = row['exit_time']
-                t.sl = row['sl']
-                t.target = row['target']
-                t.pnl = row['pnl'] if row['pnl'] else 0.0
-                t.exit_reason = row['exit_reason']
-                t.db_id = row['id']
-                
-                self.pnl_tracker.trades.append(t)
-                if t.status == "OPEN":
-                    self.active_trades.append(t)
-            
-            self.pnl_tracker.update_stats()
-            logger.info(f"Loaded {len(self.pnl_tracker.trades)} trades from DB.")
-        except Exception as e:
-            logger.error(f"Error loading trades from DB: {e}")
+        # DISABLED to ensure PnL starts from 0 in replay/backtest
+        return
+        # try:
+        #     trades_df = db.get_trades()
+        #     if trades_df.empty: return
+        #
+        #     # Filter for today or relevant session if needed
+        #     # For now, we load all to show history or filtered by strategy
+        #     for _, row in trades_df.iterrows():
+        #         t = Trade(
+        #             symbol=row['symbol'],
+        #             entry_price=row['entry_price'],
+        #             strategy_name=row['strategy_name'],
+        #             trade_type=row['trade_type'],
+        #             time=row['entry_time']
+        #         )
+        #         t.status = row['status']
+        #         t.exit_price = row['exit_price']
+        #         t.exit_time = row['exit_time']
+        #         t.sl = row['sl']
+        #         t.target = row['target']
+        #         t.pnl = row['pnl'] if row['pnl'] else 0.0
+        #         t.exit_reason = row['exit_reason']
+        #         t.db_id = row['id']
+        #         
+        #         self.pnl_tracker.trades.append(t)
+        #         if t.status == "OPEN":
+        #             self.active_trades.append(t)
+        #     
+        #     self.pnl_tracker.update_stats()
+        #     logger.info(f"Loaded {len(self.pnl_tracker.trades)} trades from DB.")
+        # except Exception as e:
+        #     logger.error(f"Error loading trades from DB: {e}")
 
     def reset_trading_state(self):
         """Reset trades, PnL, and markers."""
         self.active_trades = []
-        self.pnl_tracker = PnLTracker()
-        self.last_trade_close_times = {} # (strategy_name, symbol) -> timestamp
+        self.pnl_tracker = PnLTracker()  # Create fresh instance to reset to 0
+        self.last_trade_close_times = {}
         self.ce_markers = []
         self.pe_markers = []
         self.last_total_volumes = {}
@@ -450,6 +459,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     pcr_res = await fetch_pcr_insights(index_sym, ref_date=ref_date)
                     state.pcr_insights = pcr_res.get('insights', {})
                     state.buildup_history = pcr_res.get('buildup_list', [])
+                    
+                    # Fetch Full Day 5-min PCR Map
+                    logger.info(f"About to fetch historical PCR for {index_sym}...")
+                    state.daily_pcr_history = await fetch_historical_pcr(index_sym, ref_date or datetime.now())
+                    logger.info(f"Loaded {len(state.daily_pcr_history)} historical PCR records for replay.")
+                    
+                    # Debug: Print first few entries
+                    if state.daily_pcr_history:
+                        sample_keys = list(state.daily_pcr_history.keys())[:3]
+                        for k in sample_keys:
+                            logger.info(f"  Sample PCR at {k}: {state.daily_pcr_history[k]}")
 
                     logger.info(f"Replay init for {index_sym} on {data.get('date')}")
                     state.tf_main.update_params(index_sym)
@@ -476,7 +496,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_json({"type": "error", "message": f"Option data not found for {state.ce_sym} or {state.pe_sym} in market hours."})
                         return
 
-                    state.replay_idx = 50
+                    state.replay_idx = 1
                     state.ce_markers = []
                     state.pe_markers = []
                     state.is_playing = True
@@ -672,6 +692,30 @@ def normalize_buildup(status):
     if "LONG UNWIND" in s: return "LONG UNWIND"
     return "NEUTRAL"
 
+def get_sentiment_from_buildup(buildup_status):
+    """
+    Maps buildup status to sentiment for UI coloring.
+    
+    SHORT COVERING & LONG BUILD = BULLISH (Price ↑, buyers active)
+    SHORT BUILD & LONG UNWINDING = BEARISH (Price ↓, sellers active)
+    
+    Returns: 'BULLISH', 'BEARISH', or 'NEUTRAL'
+    """
+    if not buildup_status:
+        return 'NEUTRAL'
+    
+    status_upper = str(buildup_status).upper()
+    
+    # BULLISH scenarios: Prices rising, buyers entering/sellers fleeing
+    if 'LONG BUILD' in status_upper or 'SHORT COVER' in status_upper:
+        return 'BULLISH'
+    
+    # BEARISH scenarios: Prices falling, sellers entering/buyers fleeing
+    if 'LONG UNWINDING' in status_upper or 'SHORT BUILD' in status_upper or 'LONG UNWIND' in status_upper:
+        return 'BEARISH'
+    
+    return 'NEUTRAL'
+
 def get_buildup_for_time(buildup_history, current_time):
     """
     Parses buildup_history to find the one matching current_time.
@@ -716,15 +760,15 @@ async def send_replay_step(websocket, state, send=True):
         if send and websocket.client_state != WebSocketState.CONNECTED: return
         if state.replay_data_ce is None or state.replay_data_pe is None or state.replay_data_idx is None: return
 
-        # 2. Slice Data
-        sub_ce = state.replay_data_ce.iloc[max(0, state.replay_idx-50):state.replay_idx]
-        sub_pe = state.replay_data_pe.iloc[max(0, state.replay_idx-50):state.replay_idx]
+        # 2. Slice Data (Increased context to 100 bars)
+        sub_ce = state.replay_data_ce.iloc[max(0, state.replay_idx-100):state.replay_idx]
+        sub_pe = state.replay_data_pe.iloc[max(0, state.replay_idx-100):state.replay_idx]
         if sub_ce.empty or sub_pe.empty: return
 
         last_time = sub_ce.index[-1]
         # Matching slice for index
         idx_full = state.replay_data_idx[state.replay_data_idx.index <= last_time]
-        sub_idx = idx_full.iloc[-50:]
+        sub_idx = idx_full.iloc[-100:]
         
         if sub_ce.empty or sub_pe.empty:
             with open("replay_debug.log", "a") as f:
@@ -746,16 +790,56 @@ async def send_replay_step(websocket, state, send=True):
         hist_buildup = get_buildup_for_time(state.buildup_history, last_time)
         if hist_buildup:
             state.pcr_insights['buildup_status'] = hist_buildup
+            # Add sentiment based on buildup
+            state.pcr_insights['sentiment'] = get_sentiment_from_buildup(hist_buildup)
+            print(f"DEBUG: Buildup: {hist_buildup}, Sentiment: {state.pcr_insights['sentiment']}")
+        else:
+            state.pcr_insights.setdefault('sentiment', 'NEUTRAL')
+            
+        # Update PCR from Historical Map (Smart Fallback)
+        time_str = last_time.strftime("%H:%M")
+        
+        if state.daily_pcr_history:
+            # Try exact match first
+            if time_str in state.daily_pcr_history:
+                rec = state.daily_pcr_history[time_str]
+                state.pcr_insights['pcr'] = rec['pcr']
+                # Removed debug print for cleaner logs
+            else:
+                # Smart fallback: find nearest PCR within 5 minutes
+                nearest_pcr = find_nearest_pcr(state.daily_pcr_history, last_time, max_gap_minutes=5)
+                
+                if nearest_pcr:
+                    state.pcr_insights['pcr'] = nearest_pcr['pcr']
+                    logger.debug(f"Using PCR {nearest_pcr['pcr']} from {nearest_pcr['time']} (gap: {nearest_pcr['gap_mins']:.1f}m)")
+                else:
+                    # No PCR within 5 mins, check if gap > 15 mins to go NEUTRAL
+                    # For now, keep last known PCR if gap < 15 mins
+                    logger.debug(f"No PCR within 5 mins of {time_str}, keeping last known")
+        else:
+            logger.warning(f"No PCR history available")
 
         # 4. Check Active Trades
         old_trades_count = len(state.active_trades)
         check_trade_exits(state, sub_idx, sub_ce, sub_pe, store_db=False) # Replay doesn't write to primary trade DB
-        if len(state.active_trades) != old_trades_count:
-             # Re-calculate stats if a trade closed
-             state.pnl_tracker.update_stats()
+        
+        # Prepare current prices for PnL update
+        current_prices = {}
+        if not sub_ce.empty: current_prices[state.ce_sym] = sub_ce['close'].iloc[-1]
+        if not sub_pe.empty: current_prices[state.pe_sym] = sub_pe['close'].iloc[-1]
+        
+        # Final Update PnL stats for the current state (Including Unrealized)
+        state.pnl_tracker.update_stats(state.active_trades, current_prices)
 
-        # Final Update PnL stats for the current state
-        state.pnl_tracker.update_stats()
+        # Volume PCR using per-strike data is INVALID for overall market context
+        # We rely 100% on Overall Chain PCR from daily_pcr_history
+        # print(f"DEBUG: Current PCR for {time_str}: {state.pcr_insights.get('pcr')}")
+        
+        # Note: If historical PCR wasn't fetched or isn't available for this time,
+        # state.pcr_insights will retain the last known value or default.
+        # Volume PCR using per-strike data is INVALID and has been removed.
+        
+        # Store PCR Insights for analysis
 
         # EOD Square-off check
         if is_market_closing(last_time):
@@ -767,8 +851,11 @@ async def send_replay_step(websocket, state, send=True):
                 db.store_trade(trade)
                 state.active_trades.remove(trade)
 
-        # Store PCR Insights for analysis
-        db.store_pcr_insight(state.index_sym.replace("NSE:", ""), int(last_time.timestamp()), state.pcr_insights, state.buildup_history)
+        # Store PCR Insights for analysis (Optimized)
+        last_time_ts = int(last_time.timestamp())
+        if last_time_ts > state.last_pcr_store_ts:
+            db.store_pcr_insight(state.index_sym.replace("NSE:", ""), last_time_ts, state.pcr_insights, state.buildup_history)
+            state.last_pcr_store_ts = last_time_ts
 
         # 5. Format Records for Markers
         ce_recs = format_records(sub_ce)
@@ -791,6 +878,7 @@ async def send_replay_step(websocket, state, send=True):
         # 7. Construct Message
         msg = {
             "type": "replay_step",
+            "market_time": last_time.strftime("%H:%M:%S"),
             "index_data": idx_recs,
             "ce_data": ce_recs,
             "pe_data": pe_recs,
@@ -803,7 +891,8 @@ async def send_replay_step(websocket, state, send=True):
             "max_idx": min(len(state.replay_data_ce), len(state.replay_data_pe)),
             "current_idx": state.replay_idx,
             "pnl_stats": state.pnl_tracker.get_stats(),
-            "new_signals": new_signals
+            "new_signals": new_signals,
+            "pcr_insights": state.pcr_insights
         }
 
         if send:
@@ -879,6 +968,15 @@ async def run_full_backtest(websocket, state, index_sym, date_str):
         if idx_df.empty:
             await websocket.send_json({"type": "error", "message": f"No data found for {index_sym} on {date_str}"})
             return
+            
+        # Fetch Historical PCR Map
+        logger.info(f"[Backtest] About to fetch historical PCR for {index_sym}...")
+        state.daily_pcr_history = await fetch_historical_pcr(index_sym, ref_date_eod)
+        logger.info(f"[Backtest] Loaded {len(state.daily_pcr_history)} PCR records.")
+        if state.daily_pcr_history:
+            sample_keys = list(state.daily_pcr_history.keys())[:3]
+            for k in sample_keys:
+                logger.info(f"  [Backtest] Sample PCR at {k}: {state.daily_pcr_history[k]}")
 
         strike = dm.get_atm_strike(idx_df['close'].iloc[0], step=100 if "BANK" in index_sym else 50)
         ce_sym = dm.get_option_symbol(index_sym, strike, "C", reference_date=ref_date_eod)
@@ -907,12 +1005,12 @@ async def run_full_backtest(websocket, state, index_sym, date_str):
         start_idx = 50
 
         for i in range(start_idx, max_len):
-            sub_ce = ce_df.iloc[max(0, i-50):i]
-            sub_pe = pe_df.iloc[max(0, i-50):i]
+            sub_ce = ce_df.iloc[max(0, i-100):i]
+            sub_pe = pe_df.iloc[max(0, i-100):i]
             last_time = sub_ce.index[-1]
             # Precise index slice for this timestamp
             idx_full = idx_df[idx_df.index <= last_time]
-            sub_idx = idx_full.iloc[-50:]
+            sub_idx = idx_full.iloc[-100:]
 
             # Use shifted timestamp for logic consistency
             c_time = int(last_time.timestamp()) + 19800
@@ -920,6 +1018,14 @@ async def run_full_backtest(websocket, state, index_sym, date_str):
             # PCR & Buildup Sync
             hist_buildup = get_buildup_for_time(state.buildup_history, last_time)
             if hist_buildup: state.pcr_insights['buildup_status'] = hist_buildup
+            
+            # Update PCR from Historical Map
+            time_str = last_time.strftime("%H:%M")
+            if time_str in state.daily_pcr_history:
+                rec = state.daily_pcr_history[time_str]
+                state.pcr_insights['pcr'] = rec['pcr']
+                state.pcr_insights['call_oi'] = rec['call_oi']
+                state.pcr_insights['put_oi'] = rec['put_oi']
 
             # Exits and Strategy Check
             check_trade_exits(state, sub_idx, sub_ce, sub_pe, store_db=False)
@@ -1024,34 +1130,217 @@ async def fetch_pcr_insights(index_sym, ref_date=None):
 
         if not valid: return {"insights": {}, "buildup_list": []}
         target_dt = valid[0]
-        api_expiry_str = target_dt.strftime("%Y-%m-%d")
 
         insights = {}
         # Only fetch live snapshot if it's for today
         if not ref_date or ref_date.date() == datetime.now().date():
-            live_data = await tl_adv.get_live_oi_snapshot(stock_id, api_expiry_str)
-            insights = tl_adv.extract_writer_insights(live_data) or {}
+            # For live, we can try snapshot but if it fails/historical we need defaults
+            insights = {'pcr': 1.0, 'pcr_change': 1.0, 'buildup_status': 'NEUTRAL'}
         else:
             insights = {'pcr': 1.0, 'pcr_change': 1.0, 'buildup_status': 'NEUTRAL'}
 
-        # Fetch 5m buildup
-        buildup_list = await tl_adv.get_buildup_5m(target_dt, index_sym)
+        # Fetch 5m buildup - use latest client signature
+        buildup_list = await tl_adv.get_buildup_5m(index_sym)
 
         # Normalize buildup status text for latest insight
         if buildup_list and len(buildup_list) > 0:
             latest = buildup_list[0]
+            # Handle both list and dict formats
             status = "NEUTRAL"
             if isinstance(latest, list) and len(latest) > 1:
                 status = latest[1]
             elif isinstance(latest, dict):
-                status = latest.get('buildup') or latest.get('status') or latest.get('buildup_type') or "NEUTRAL"
-
+                status = latest.get('buildup') or latest.get('status') or "NEUTRAL"
+            
             insights['buildup_status'] = normalize_buildup(status)
-
+            insights['sentiment'] = get_sentiment_from_buildup(insights['buildup_status'])
+            # Note: PCR will be updated by the historical map/smart fallback later
+        
         return {"insights": insights, "buildup_list": buildup_list}
     except Exception as e:
+        import traceback
+        traceback.print_exc()   
         logger.error(f"Error fetching PCR insights: {e}")
     return {"insights": {}, "buildup_list": []}
+
+def get_pcr_cache_path(index_sym, date):
+    """Get cache file path for index and date."""
+    date_str = date.strftime("%Y-%m-%d")
+    filename = f"{index_sym}_{date_str}_pcr.json"
+    return PCR_CACHE_DIR / filename
+
+def save_pcr_to_cache(index_sym, date, pcr_history):
+    """Save PCR history to disk."""
+    try:
+        cache_path = get_pcr_cache_path(index_sym, date)
+        with open(cache_path, 'w') as f:
+            json.dump(pcr_history, f, indent=2)
+        logger.info(f"💾 Saved PCR cache: {cache_path.name} ({len(pcr_history)} intervals)")
+    except Exception as e:
+        logger.error(f"Failed to save PCR cache: {e}")
+
+def load_pcr_from_cache(index_sym, date):
+    """Load PCR history from disk if exists."""
+    try:
+        cache_path = get_pcr_cache_path(index_sym, date)
+        if cache_path.exists():
+            with open(cache_path, 'r') as f:
+                pcr_history = json.load(f)
+            logger.info(f"📂 Loaded PCR cache: {cache_path.name} ({len(pcr_history)} intervals)")
+            return pcr_history
+    except Exception as e:
+        logger.error(f"Failed to load PCR cache: {e}")
+    return None
+
+def find_nearest_pcr(pcr_history, target_time, max_gap_minutes=5):
+    """
+    Find nearest PCR record within max_gap_minutes of target_time.
+    Returns: {'pcr': float, 'time': str, 'gap_mins': float} or None
+    """
+    if not pcr_history:
+        return None
+    
+    target_time_only = target_time.time()
+    best_match = None
+    min_gap = float('inf')
+    
+    for time_str, pcr_data in pcr_history.items():
+        try:
+            # Parse time string "HH:MM"
+            pcr_time = datetime.strptime(time_str, "%H:%M").time()
+            
+            # Calculate gap in minutes
+            pcr_dt = datetime.combine(target_time.date(), pcr_time)
+            target_dt = datetime.combine(target_time.date(), target_time_only)
+            gap_seconds = abs((target_dt - pcr_dt).total_seconds())
+            gap_minutes = gap_seconds / 60
+            
+            # Only consider if within max gap and it's the nearest so far
+            if gap_minutes <= max_gap_minutes and gap_minutes < min_gap:
+                min_gap = gap_minutes
+                best_match = {
+                    'pcr': pcr_data['pcr'],
+                    'time': time_str,
+                    'gap_mins': gap_minutes
+                }
+        except Exception as e:
+            continue
+    
+    return best_match
+
+async def fetch_historical_pcr(index_sym, ref_date):
+    """
+    Fetches full day 5-min Overall Chain PCR history.
+    Uses cache if available, otherwise fetches from API and caches result.
+    """
+    # Try loading from cache first
+    cached_pcr = load_pcr_from_cache(index_sym, ref_date)
+    if cached_pcr:
+        logger.info(f"✅ Using cached PCR data (skipping 82 API calls)")
+        return cached_pcr
+    
+    # If no cache, fetch from API
+    logger.info(f"🌐 No cache found, fetching PCR from Trendlyne API...")
+    history = await _fetch_pcr_from_api(index_sym, ref_date)
+    
+    # Save to cache for future use
+    if history:
+        save_pcr_to_cache(index_sym, ref_date, history)
+    
+    return history
+
+async def _fetch_pcr_from_api(index_sym, ref_date):
+    """
+    Fetches PCR by summing absolute OI across ATM ± 20 strikes per 5-min interval.
+    """
+    try:
+        # 1. Determine ATM Strike
+        stock_id = await tl_adv.get_stock_id(index_sym)
+        idx_df = dm.get_data(index_sym, interval=Interval.in_1_minute, n_bars=1, reference_date=ref_date)
+        if idx_df.empty:
+            logger.error(f"❌ No index data for {index_sym} on {ref_date}")
+            return {}
+        
+        spot_price = idx_df['close'].iloc[0]
+        step = 100 if "BANK" in index_sym.upper() else 50
+        atm_strike = int(round(spot_price / step) * step)
+        
+        logger.info(f"📊 Calculating Overall Chain PCR | {index_sym} | ATM: {atm_strike} | Date: {ref_date.date()}")
+        
+        # 2. Generate Strike Range: ATM ± 20 strikes (41 total)
+        strikes = [atm_strike + (i * step) for i in range(-20, 21)]
+        
+        # 3. Fetch ALL strikes in parallel
+        tasks = []
+        for strike in strikes:
+            tasks.append(tl_adv.get_buildup_5m(index_sym, strike=strike, o_type="Call"))
+            tasks.append(tl_adv.get_buildup_5m(index_sym, strike=strike, o_type="Put"))
+        
+        logger.info(f"🌐 Fetching buildup for {len(strikes)} strikes (82 API calls)...")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 4. Extract and Organize Data
+        # Group by interval: { "15:25 TO 15:30": { "CE": 0, "PE": 0, "CE_count": 0, "PE_count": 0 } }
+        interval_map = {}
+        
+        for i, strike in enumerate(strikes):
+            ce_res = results[i * 2]
+            pe_res = results[i * 2 + 1]
+            
+            # CE Summation
+            if not isinstance(ce_res, Exception) and ce_res:
+                for row in ce_res:
+                    iv = row.get('interval')
+                    if not iv: continue
+                    val = float(row.get('oi') or row.get('open_interest', 0))
+                    if val > 0:
+                        if iv not in interval_map:
+                            interval_map[iv] = {"CE": 0.0, "PE": 0.0, "CE_count": 0, "PE_count": 0}
+                        interval_map[iv]["CE"] += val
+                        interval_map[iv]["CE_count"] += 1
+            
+            # PE Summation
+            if not isinstance(pe_res, Exception) and pe_res:
+                for row in pe_res:
+                    iv = row.get('interval')
+                    if not iv: continue
+                    val = float(row.get('oi') or row.get('open_interest', 0))
+                    if val > 0:
+                        if iv not in interval_map:
+                            interval_map[iv] = {"CE": 0.0, "PE": 0.0, "CE_count": 0, "PE_count": 0}
+                        interval_map[iv]["PE"] += val
+                        interval_map[iv]["PE_count"] += 1
+
+        # 5. Final Calculation
+        history = {}
+        logger.info(f"📈 Processing {len(interval_map)} intervals...")
+        
+        for iv, totals in sorted(interval_map.items()):
+            # Only calculate if we have data from at least 10 strikes on each side to avoid outliers
+            if totals["CE_count"] > 5 and totals["PE_count"] > 5:
+                pcr = round(totals["PE"] / totals["CE"], 2)
+                
+                # Extract end time: "15:25 TO 15:30" -> "15:30"
+                parts = iv.split(" TO ")
+                if len(parts) == 2:
+                    time_key = parts[1]
+                    history[time_key] = {
+                        "pcr": pcr,
+                        "total_call_oi": totals["CE"],
+                        "total_put_oi": totals["PE"]
+                    }
+                    if pcr > 5:
+                        logger.warning(f"⚠️ High PCR alert at {time_key}: {pcr} (CE: {totals['CE']:.0f} [{totals['CE_count']} strikes], PE: {totals['PE']:.0f} [{totals['PE_count']} strikes])")
+            else:
+                logger.debug(f"⏭️ Skipping interval {iv} due to insufficient strike data (CE: {totals['CE_count']}, PE: {totals['PE_count']})")
+
+        logger.info(f"✅ PCR calculation complete. Generated {len(history)} intervals.")
+        return history
+    except Exception as e:
+        logger.error(f"❌ Critical error in PCR calculation: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
 
 async def fetch_trendlyne_signals(index_sym, atm_strike):
     """

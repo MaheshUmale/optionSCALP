@@ -58,7 +58,7 @@ export const CONFIG = {
     VOLUME_STYLE: {
         color: '#26A69A',
         priceFormat: { type: 'volume' },
-        priceScaleId: '',
+        priceScaleId: 'volume',
         scaleMargins: { top: 0.85, bottom: 0 }
     },
 
