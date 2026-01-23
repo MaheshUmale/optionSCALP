@@ -170,10 +170,40 @@ export class ChartManager {
     }
 
     fitContent(chartId) {
-        const chart = this.charts[chartId];
-        if (chart) {
-            setTimeout(() => chart.timeScale().fitContent(), 100);
-        }
+        // Disabled auto-fit to prevent zoom mismatch
+        // const chart = this.charts[chartId];
+        // if (chart) {
+        //     setTimeout(() => chart.timeScale().fitContent(), 100);
+        // }
+    }
+
+    alignCharts(bars = 50) {
+        // Find the chart with the most recent data to use as anchor
+        let refChartId = 'index';
+        let refSeries = this.series[refChartId];
+
+        // Safety check
+        if (!refSeries || this.series['index'].data().length === 0) return;
+
+        // Get total data points
+        const data = this.series['index'].data();
+        if (data.length === 0) return;
+
+        // Calculate range
+        const lastIndex = data.length - 1;
+        const startIndex = Math.max(0, lastIndex - bars);
+
+        const fromTime = data[startIndex].time;
+        const toTime = data[lastIndex].time;
+
+        const range = { from: fromTime, to: toTime };
+
+        // Apply to ALL charts
+        Object.values(this.charts).forEach(chart => {
+            if (chart) {
+                chart.timeScale().setVisibleRange(range);
+            }
+        });
     }
 
     handleResize() {

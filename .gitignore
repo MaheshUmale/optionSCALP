@@ -8,3 +8,6 @@ EOF
 *.db
 optionscalp.db
 optionscalp.db.bkp
+*.db*
+*.db-wal
+*.db-shm

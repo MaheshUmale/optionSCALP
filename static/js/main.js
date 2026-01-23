@@ -42,6 +42,12 @@ class OptionScalpDashboard {
             this.fetchLive();
         });
 
+        // Replay Mode button
+        document.getElementById('btn-replay')?.addEventListener('click', () => {
+            // Simple navigation to replay page for now
+            window.location.href = '/replay';
+        });
+
         // Index selector
         document.getElementById('index-select')?.addEventListener('change', (e) => {
             this.currentIndex = e.target.value;
@@ -91,21 +97,21 @@ class OptionScalpDashboard {
         // Update chart data
         if (data.index_data) {
             this.chartManager.updateChartData('index', data.index_data);
-            this.chartManager.fitContent('index');
             this.updateChartLabels('index', this.symbols.index, data.index_data);
         }
 
         if (data.ce_data) {
             this.chartManager.updateChartData('ce', data.ce_data);
-            this.chartManager.fitContent('ce');
             this.updateChartLabels('ce', this.symbols.ce, data.ce_data);
         }
 
         if (data.pe_data) {
             this.chartManager.updateChartData('pe', data.pe_data);
-            this.chartManager.fitContent('pe');
             this.updateChartLabels('pe', this.symbols.pe, data.pe_data);
         }
+
+        // Align all charts to same zoom level (last 60 bars)
+        setTimeout(() => this.chartManager.alignCharts(60), 100);
 
         // Update markers
         if (data.ce_markers) {
