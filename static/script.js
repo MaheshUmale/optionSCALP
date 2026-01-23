@@ -37,15 +37,6 @@ function initCharts() {
     const ceEl = document.getElementById('ce-chart');
     const peEl = document.getElementById('pe-chart');
 
-    if (!idxEl || !ceEl || !peEl) {
-        console.log("Charts not found in DOM, skipping initialization.");
-        return;
-    }
-
-    idxChart = LightweightCharts.createChart(idxEl, chartOptions);
-    ceChart = LightweightCharts.createChart(ceEl, chartOptions);
-    peChart = LightweightCharts.createChart(peEl, chartOptions);
-
     const candleStyle = {
         upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
         wickUpColor: '#26a69a', wickDownColor: '#ef5350',
@@ -53,29 +44,6 @@ function initCharts() {
         lastValueVisible: true,
         priceFormat: { type: 'price', precision: 2, minMove: 0.05 },
     };
-
-    idxSeries = idxChart.addCandlestickSeries({
-        ...candleStyle,
-        priceScaleId: 'right'
-    });
-    ceSeries = ceChart.addCandlestickSeries({
-        ...candleStyle,
-        priceScaleId: 'right'
-    });
-    peSeries = peChart.addCandlestickSeries({
-        ...candleStyle,
-        priceScaleId: 'right'
-    });
-
-    [idxChart, ceChart, peChart].forEach(c => {
-        c.priceScale('right').applyOptions({
-            autoScale: true,
-            borderVisible: false,
-            scaleMargins: { top: 0.1, bottom: 0.2 },
-            minimumWidth: 100,
-        });
-    });
-
     const volStyle = {
         color: '#26a69a',
         priceFormat: { type: 'volume' },
@@ -83,12 +51,27 @@ function initCharts() {
         scaleMargins: { top: 0.85, bottom: 0 },
     };
 
-    idxVolSeries = idxChart.addHistogramSeries(volStyle);
-    ceVolSeries = ceChart.addHistogramSeries(volStyle);
-    peVolSeries = peChart.addHistogramSeries(volStyle);
+    if (idxEl) {
+        idxChart = LightweightCharts.createChart(idxEl, chartOptions);
+        idxSeries = idxChart.addCandlestickSeries({ ...candleStyle, priceScaleId: 'right' });
+        idxVolSeries = idxChart.addHistogramSeries(volStyle);
+        idxChart.priceScale('right').applyOptions({ autoScale: true, borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.2 }, minimumWidth: 100 });
+    }
+    if (ceEl) {
+        ceChart = LightweightCharts.createChart(ceEl, chartOptions);
+        ceSeries = ceChart.addCandlestickSeries({ ...candleStyle, priceScaleId: 'right' });
+        ceVolSeries = ceChart.addHistogramSeries(volStyle);
+        ceChart.priceScale('right').applyOptions({ autoScale: true, borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.2 }, minimumWidth: 100 });
+    }
+    if (peEl) {
+        peChart = LightweightCharts.createChart(peEl, chartOptions);
+        peSeries = peChart.addCandlestickSeries({ ...candleStyle, priceScaleId: 'right' });
+        peVolSeries = peChart.addHistogramSeries(volStyle);
+        peChart.priceScale('right').applyOptions({ autoScale: true, borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.2 }, minimumWidth: 100 });
+    }
 
     // Synchronize crosshairs and time scales
-    const charts = [idxChart, ceChart, peChart];
+    const charts = [idxChart, ceChart, peChart].filter(c => c !== undefined && c !== null);
     let isSyncing = false;
 
     charts.forEach((chart, index) => {
@@ -149,7 +132,8 @@ ws.onmessage = (event) => {
         peMarkers = [];
         if (ceSeries) ceSeries.setMarkers([]);
         if (peSeries) peSeries.setMarkers([]);
-        document.getElementById('signals-list').innerHTML = '';
+        const signalsList = document.getElementById('signals-list');
+        if (signalsList) signalsList.innerHTML = '';
         updatePnLStats(null);
         return;
     }
@@ -168,31 +152,27 @@ ws.onmessage = (event) => {
 
         if (i_data && idxSeries) {
             idxSeries.setData(i_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
-            idxVolSeries.setData(i_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
-            if (data.type === 'live_data' || data.type === 'backtest_results') setTimeout(() => idxChart.timeScale().fitContent(), 100);
+            if (idxVolSeries) idxVolSeries.setData(i_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
+            if ((data.type === 'live_data' || data.type === 'backtest_results') && idxChart) setTimeout(() => idxChart.timeScale().fitContent(), 100);
         }
 
-        if (c_data) {
-            if (ceSeries) {
-                ceSeries.setData(c_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
-                ceVolSeries.setData(c_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
-                if (data.type === 'live_data' || data.type === 'backtest_results') setTimeout(() => ceChart.timeScale().fitContent(), 100);
-            }
+        if (c_data && ceSeries) {
+            ceSeries.setData(c_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
+            if (ceVolSeries) ceVolSeries.setData(c_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
+            if ((data.type === 'live_data' || data.type === 'backtest_results') && ceChart) setTimeout(() => ceChart.timeScale().fitContent(), 100);
             if (data.ce_markers) {
                 ceMarkers = data.ce_markers;
-                if (ceSeries) ceSeries.setMarkers(ceMarkers);
+                ceSeries.setMarkers(ceMarkers);
             }
         }
 
-        if (p_data) {
-            if (peSeries) {
-                peSeries.setData(p_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
-                peVolSeries.setData(p_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
-                if (data.type === 'live_data' || data.type === 'backtest_results') setTimeout(() => peChart.timeScale().fitContent(), 100);
-            }
+        if (p_data && peSeries) {
+            peSeries.setData(p_data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })));
+            if (peVolSeries) peVolSeries.setData(p_data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a' : '#ef5350' })));
+            if ((data.type === 'live_data' || data.type === 'backtest_results') && peChart) setTimeout(() => peChart.timeScale().fitContent(), 100);
             if (data.pe_markers) {
                 peMarkers = data.pe_markers;
-                if (peSeries) peSeries.setMarkers(peMarkers);
+                peSeries.setMarkers(peMarkers);
             }
         }
 
@@ -230,20 +210,17 @@ ws.onmessage = (event) => {
         const c = data.candle;
         const v = { time: c.time, value: c.volume, color: c.close >= c.open ? '#26a69a' : '#ef5350' };
 
-        if (data.is_index) {
-            if (idxSeries) {
-                idxSeries.update(c);
-                idxVolSeries.update(v);
-            }
-            if (document.getElementById('display-index-val')) {
-                document.getElementById('display-index-val').innerText = c.close.toFixed(2);
-            }
+        if (data.is_index && idxSeries) {
+            idxSeries.update(c);
+            if (idxVolSeries) idxVolSeries.update(v);
+            const dispIdx = document.getElementById('display-index-val');
+            if (dispIdx) dispIdx.innerText = c.close.toFixed(2);
         } else if (data.is_ce && ceSeries) {
             ceSeries.update(c);
-            ceVolSeries.update(v);
+            if (ceVolSeries) ceVolSeries.update(v);
         } else if (data.is_pe && peSeries) {
             peSeries.update(c);
-            peVolSeries.update(v);
+            if (peVolSeries) peVolSeries.update(v);
         }
     }
 
@@ -288,6 +265,7 @@ ws.onmessage = (event) => {
 
 function updateSignal(sig) {
     const list = document.getElementById('signals-list');
+    if (!list) return;
 
     // Prevent duplicates in the UI
     const timeStr = sig.time ? new Date((sig.time - 19800) * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
@@ -341,6 +319,7 @@ function renderStrategyReport(report) {
 
 function updateDeltaSignal(sig) {
     const list = document.getElementById('signals-list');
+    if (!list) return;
     const div = document.createElement('div');
     div.className = 'signal-item delta-signal';
     const color = sig.type === 'BULLISH' ? '#26a69a' : '#ef5350';

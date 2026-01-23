@@ -123,6 +123,10 @@ async def get_replay(request: Request):
 async def get_chart(request: Request):
     return templates.TemplateResponse("chart.html", {"request": request})
 
+@app.get("/live_index", response_class=HTMLResponse)
+async def get_live_index(request: Request):
+    return templates.TemplateResponse("live_index.html", {"request": request})
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
