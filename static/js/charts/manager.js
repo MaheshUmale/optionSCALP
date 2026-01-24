@@ -134,6 +134,14 @@ export class ChartManager {
 
         if (!series || !data || data.length === 0) return;
 
+        const isInitialLoad = !this.storedData[chartId] || this.storedData[chartId].length === 0;
+
+        // Optimized for incremental replay: if only 1-2 candles and not initial load, use update instead of setData
+        if (!isInitialLoad && data.length <= 2) {
+            data.forEach(c => this.updateLiveCandle(chartId, c));
+            return;
+        }
+
         const candleData = data.filter(d => d.open > 0 && d.high > 0 && d.low > 0 && d.close > 0).map(d => ({
             time: d.time,
             open: d.open,
@@ -154,7 +162,6 @@ export class ChartManager {
         }
 
         // Store data for alignment/referencing
-        const isInitialLoad = !this.storedData[chartId] || this.storedData[chartId].length === 0;
         this.storedData[chartId] = candleData;
 
         // Scaling logic: 
