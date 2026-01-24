@@ -83,7 +83,7 @@ async def report_signal(setup, strat_name, symbol, candle_time, is_pe=False):
         "reason": setup.get('reason'),
         "time": candle_time,
         "is_pe": is_pe,
-        "type": "LONG" # We always buy options
+        "type": "BUY" # We always buy options
     }
     try:
         async with httpx.AsyncClient() as client:

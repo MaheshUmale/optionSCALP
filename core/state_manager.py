@@ -2,11 +2,18 @@ import uuid
 from datetime import datetime, timezone
 import numpy as np
 
+DEFAULT_TICK = {
+    "ltp": 0, "ltq": 0, "atp": 0, "vtt": 0, "oi": 0, "oiChange": 0, "oiChangePct": 0,
+    "buildup": "Neutral", "iv": 0, "tbq": 0, "tsq": 0,
+    "greeks": {"delta": 0, "theta": 0, "gamma": 0, "vega": 0, "rho": 0},
+    "depth": {"bids": [], "asks": []}
+}
+
 class MarketState:
     def __init__(self):
-        self.underlying = {"history": [], "tick": {}, "signals": []}
-        self.ceOption = {"history": [], "tick": {}, "signals": []}
-        self.peOption = {"history": [], "tick": {}, "signals": []}
+        self.underlying = {"history": [], "tick": DEFAULT_TICK.copy(), "signals": []}
+        self.ceOption = {"history": [], "tick": DEFAULT_TICK.copy(), "signals": []}
+        self.peOption = {"history": [], "tick": DEFAULT_TICK.copy(), "signals": []}
         self.oiData = []
         self.pcr = 1.0
         self.pcrChange = 0.0
