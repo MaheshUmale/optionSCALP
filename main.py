@@ -797,17 +797,19 @@ async def send_replay_step(websocket, state, send=True):
             state.pcr_insights.setdefault('sentiment', 'NEUTRAL')
             
         # Update PCR from Historical Map (Smart Fallback)
-        time_str = last_time.strftime("%H:%M")
+        # Convert UTC last_time to IST for matching with PCR history keys
+        time_str = last_time.astimezone(IST_TZ).strftime("%H:%M")
         
         if state.daily_pcr_history:
             # Try exact match first
             if time_str in state.daily_pcr_history:
                 rec = state.daily_pcr_history[time_str]
                 state.pcr_insights['pcr'] = rec['pcr']
-                # Removed debug print for cleaner logs
+                state.pcr_insights['call_oi'] = rec.get('call_oi') or rec.get('total_call_oi')
+                state.pcr_insights['put_oi'] = rec.get('put_oi') or rec.get('total_put_oi')
             else:
                 # Smart fallback: find nearest PCR within 5 minutes
-                nearest_pcr = find_nearest_pcr(state.daily_pcr_history, last_time, max_gap_minutes=5)
+                nearest_pcr = find_nearest_pcr(state.daily_pcr_history, last_time.astimezone(IST_TZ), max_gap_minutes=5)
                 
                 if nearest_pcr:
                     state.pcr_insights['pcr'] = nearest_pcr['pcr']
@@ -1020,7 +1022,7 @@ async def run_full_backtest(websocket, state, index_sym, date_str):
             if hist_buildup: state.pcr_insights['buildup_status'] = hist_buildup
             
             # Update PCR from Historical Map
-            time_str = last_time.strftime("%H:%M")
+            time_str = last_time.astimezone(IST_TZ).strftime("%H:%M")
             if time_str in state.daily_pcr_history:
                 rec = state.daily_pcr_history[time_str]
                 state.pcr_insights['pcr'] = rec['pcr']
@@ -1231,27 +1233,48 @@ def find_nearest_pcr(pcr_history, target_time, max_gap_minutes=5):
 async def fetch_historical_pcr(index_sym, ref_date):
     """
     Fetches full day 5-min Overall Chain PCR history.
-    Uses cache if available, otherwise fetches from API and caches result.
+    Uses Database if available, otherwise fetches from API and stores result.
     """
-    # Try loading from cache first
-    cached_pcr = load_pcr_from_cache(index_sym, ref_date)
-    if cached_pcr:
-        logger.info(f"✅ Using cached PCR data (skipping 82 API calls)")
-        return cached_pcr
+    # 1. Try DB first
+    # For DB query, we need start and end of the reference day in UTC
+    start_of_day = ref_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = ref_date.replace(hour=23, minute=59, second=59, microsecond=0)
     
-    # If no cache, fetch from API
-    logger.info(f"🌐 No cache found, fetching PCR from Trendlyne API...")
+    # Convert to Unix timestamps (assuming ref_date is in IST but dm treats it as UTC-comparable)
+    # Actually, dm uses 19800 shift for UI. For DB storage we should be consistent.
+    # Let's use simple naive comparison for now or consistent localization.
+    start_ts = int(start_of_day.timestamp())
+    end_ts = int(end_of_day.timestamp())
+    
+    clean_sym = index_sym.replace("NSE:", "")
+    db_history = db.get_pcr_history(clean_sym, start_ts, end_ts)
+    
+    if not db_history.empty:
+        logger.info(f"✅ Using DB cached PCR data for {clean_sym} ({len(db_history)} intervals)")
+        # Convert back to interval-map format: "HH:MM" -> {pcr, call_oi, put_oi}
+        history = {}
+        for _, row in db_history.iterrows():
+            # Convert timestamp back to IST string HH:MM
+            dt = datetime.fromtimestamp(row['timestamp'], tz=IST_TZ)
+            time_key = dt.strftime("%H:%M")
+            history[time_key] = {
+                "pcr": row['pcr'],
+                "call_oi": row['total_call_oi'],
+                "put_oi": row['total_put_oi']
+            }
+        return history
+
+    # 2. If no DB cache, fetch from API
+    logger.info(f"🌐 No DB cache found for {clean_sym} on {ref_date.date()}, fetching from Trendlyne...")
     history = await _fetch_pcr_from_api(index_sym, ref_date)
-    
-    # Save to cache for future use
-    if history:
-        save_pcr_to_cache(index_sym, ref_date, history)
-    
+
+    # History is already stored in DB inside _fetch_pcr_from_api
     return history
 
 async def _fetch_pcr_from_api(index_sym, ref_date):
     """
     Fetches PCR by summing absolute OI across ATM ± 20 strikes per 5-min interval.
+    Stores results in DB for persistent caching.
     """
     try:
         # 1. Determine ATM Strike
@@ -1270,17 +1293,24 @@ async def _fetch_pcr_from_api(index_sym, ref_date):
         # 2. Generate Strike Range: ATM ± 20 strikes (41 total)
         strikes = [atm_strike + (i * step) for i in range(-20, 21)]
         
-        # 3. Fetch ALL strikes in parallel
+        # 3. Fetch ALL strikes with limited concurrency to avoid 503 errors
+        sem = asyncio.Semaphore(5)
+
+        async def throttled_fetch(strike, o_type):
+            async with sem:
+                # Add a tiny sleep to further spread requests
+                await asyncio.sleep(0.2)
+                return await tl_adv.get_buildup_5m(index_sym, strike=strike, o_type=o_type)
+
         tasks = []
         for strike in strikes:
-            tasks.append(tl_adv.get_buildup_5m(index_sym, strike=strike, o_type="Call"))
-            tasks.append(tl_adv.get_buildup_5m(index_sym, strike=strike, o_type="Put"))
+            tasks.append(throttled_fetch(strike, "Call"))
+            tasks.append(throttled_fetch(strike, "Put"))
         
-        logger.info(f"🌐 Fetching buildup for {len(strikes)} strikes (82 API calls)...")
+        logger.info(f"🌐 Fetching buildup for {len(strikes)} strikes (82 API calls) with concurrency limit 5...")
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # 4. Extract and Organize Data
-        # Group by interval: { "15:25 TO 15:30": { "CE": 0, "PE": 0, "CE_count": 0, "PE_count": 0 } }
         interval_map = {}
         
         for i, strike in enumerate(strikes):
@@ -1311,12 +1341,13 @@ async def _fetch_pcr_from_api(index_sym, ref_date):
                         interval_map[iv]["PE"] += val
                         interval_map[iv]["PE_count"] += 1
 
-        # 5. Final Calculation
+        # 5. Final Calculation and DB Storage
         history = {}
-        logger.info(f"📈 Processing {len(interval_map)} intervals...")
+        clean_sym = index_sym.replace("NSE:", "")
+        logger.info(f"📈 Processing {len(interval_map)} intervals and storing to DB...")
         
         for iv, totals in sorted(interval_map.items()):
-            # Only calculate if we have data from at least 10 strikes on each side to avoid outliers
+            # Only calculate if we have data from at least 5 strikes on each side to avoid outliers
             if totals["CE_count"] > 5 and totals["PE_count"] > 5:
                 pcr = round(totals["PE"] / totals["CE"], 2)
                 
@@ -1326,15 +1357,30 @@ async def _fetch_pcr_from_api(index_sym, ref_date):
                     time_key = parts[1]
                     history[time_key] = {
                         "pcr": pcr,
-                        "total_call_oi": totals["CE"],
-                        "total_put_oi": totals["PE"]
+                        "call_oi": totals["CE"],
+                        "put_oi": totals["PE"]
                     }
+
+                    # Convert time_key "HH:MM" to Unix timestamp for the reference day
+                    try:
+                        h, m = map(int, time_key.split(":"))
+                        # Create datetime for the specific time on ref_date
+                        dt = ref_date.replace(hour=h, minute=m, second=0, microsecond=0)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=IST_TZ)
+                        ts = int(dt.timestamp())
+
+                        # Store in DB
+                        db.store_pcr_history(clean_sym, ts, pcr, totals["CE"], totals["PE"])
+                    except Exception as e:
+                        logger.error(f"Error storing PCR history for {time_key}: {e}")
+
                     if pcr > 5:
                         logger.warning(f"⚠️ High PCR alert at {time_key}: {pcr} (CE: {totals['CE']:.0f} [{totals['CE_count']} strikes], PE: {totals['PE']:.0f} [{totals['PE_count']} strikes])")
             else:
-                logger.debug(f"⏭️ Skipping interval {iv} due to insufficient strike data (CE: {totals['CE_count']}, PE: {totals['PE_count']})")
+                logger.debug(f"⏭️ Skipping interval {iv} due to insufficient strike data")
 
-        logger.info(f"✅ PCR calculation complete. Generated {len(history)} intervals.")
+        logger.info(f"✅ PCR calculation complete. Generated and stored {len(history)} intervals.")
         return history
     except Exception as e:
         logger.error(f"❌ Critical error in PCR calculation: {e}")
@@ -1447,8 +1493,15 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time,
                     # CRITICAL FIX: Use option price, not index price for entry
                     # Index-driven strategies analyze index but we trade OPTIONS
                     setup['entry_price'] = target_df['close'].iloc[-1]  # Option premium
-                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - 20)
-                    setup['target'] = setup.get('target') or (setup['entry_price'] + 40)
+
+                    # CRITICAL FIX: Index-driven strategies return SL/Target based on Index points.
+                    # We MUST override them to be relative to the OPTION price to prevent PnL glitches.
+                    is_bn = "BANK" in state.index_sym.upper()
+                    sl_pts = 30 if is_bn else 20
+                    tgt_pts = 60 if is_bn else 40
+
+                    setup['sl'] = setup['entry_price'] - sl_pts
+                    setup['target'] = setup['entry_price'] + tgt_pts
                     setup['is_pe'] = is_pe_trade
 
                     if handle_new_trade(state, strat.name, target_sym, setup, candle_time, store=record_trades, store_db=store_db):
@@ -1467,8 +1520,14 @@ def evaluate_all_strategies(state, idx_df, ce_df, pe_df, last_time, candle_time,
                     setup['strat_name'] = strat.name
                     setup['time'] = candle_time
                     setup['entry_price'] = setup.get('entry_price') or df['close'].iloc[-1]
-                    setup['sl'] = setup.get('sl') or (setup['entry_price'] - 20)
-                    setup['target'] = setup.get('target') or (setup['entry_price'] + 40)
+
+                    # Apply codified risk management
+                    is_bn = "BANK" in state.index_sym.upper()
+                    sl_pts = 30 if is_bn else 20
+                    tgt_pts = 60 if is_bn else 40
+
+                    setup['sl'] = setup['entry_price'] - sl_pts
+                    setup['target'] = setup['entry_price'] + tgt_pts
                     setup['is_pe'] = (side == "PE")
 
                     if handle_new_trade(state, strat.name, sym, setup, candle_time, store=record_trades, store_db=store_db):

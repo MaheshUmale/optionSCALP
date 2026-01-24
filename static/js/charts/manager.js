@@ -159,26 +159,45 @@ export class ChartManager {
 
         // Scaling logic: 
         // 1. On first load, fit content.
-        // 2. On subsequent updates (replay), maintain a fixed zoom window (e.g., 60 bars)
+        // 2. On subsequent updates (replay), maintain a fixed zoom window (e.g., 60-80 bars)
         //    that follows the leading edge (the "live" candle).
         if (isInitialLoad) {
             this.charts[chartId].timeScale().fitContent();
         } else {
-            // Smoothly track the leading edge
-            const chart = this.charts[chartId];
-            const lastCandle = candleData[candleData.length - 1];
+            // Prevent multiple setVisibleRange calls during a single sync cycle
+            if (this.isSyncing) return;
+            this.isSyncing = true;
 
-            // We want to see roughly 60 candles. 
-            // Lightweight charts works by logical index or time.
-            // Since we use setData with full slice, logical indices are reset.
-            // Let's use visible range based on time for stability.
-            const barsToShow = 60;
-            const startIndex = Math.max(0, candleData.length - barsToShow);
+            try {
+                // Smoothly track the leading edge
+                const chart = this.charts[chartId];
+                const lastCandle = candleData[candleData.length - 1];
 
-            chart.timeScale().setVisibleRange({
-                from: candleData[startIndex].time,
-                to: lastCandle.time + (60 * 5) // Add 5 mins buffer on right
-            });
+                // We want to see roughly 80 candles for better context.
+                const barsToShow = 80;
+                const startIndex = Math.max(0, candleData.length - barsToShow);
+
+                const range = {
+                    from: candleData[startIndex].time,
+                    to: lastCandle.time + (60 * 15) // Increased buffer to 15 mins for better visibility
+                };
+
+                // Apply to current chart
+                chart.timeScale().setVisibleRange(range);
+
+                // Sync others immediately to avoid jumpy transitions
+                Object.entries(this.charts).forEach(([id, c]) => {
+                    if (id !== chartId && c) {
+                        try {
+                            c.timeScale().setVisibleRange(range);
+                        } catch (e) {
+                            // Ignore errors for individual charts
+                        }
+                    }
+                });
+            } finally {
+                this.isSyncing = false;
+            }
         }
     }
 
@@ -298,6 +317,7 @@ export class ChartManager {
             volumeSeries.setData([]);
         }
 
+        this.storedData[chartId] = [];
         this.markers[chartId] = [];
     }
 
