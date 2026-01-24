@@ -59,7 +59,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 dm = DataManager()
-db = DatabaseManager()
+db = DatabaseManager(db_path=config.DB_PATH)
 tl_client = TrendlyneClient()
 tl_adv = TrendlyneScalper()
 
@@ -432,7 +432,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         live_feed.add_symbols(list(set(symbols)))
 
                 elif data['type'] == 'start_replay':
-                    logger.info(f"Starting replay for {data['index']} at {data.get('date', 'now')}")
+                    index_raw = data['index'].replace("NSE:", "")
+                    logger.info(f"Starting replay for {index_raw} at {data.get('date', 'now')}")
                     state.is_playing = False
                     state.is_live = False
                     # Reset state for new replay
@@ -440,10 +441,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.reset_trading_state()
                     await websocket.send_json({"type": "reset_ui"})
 
-                    index_sym = data['index']
-                    if not index_sym.startswith("NSE:"):
-                        index_sym = f"NSE:{index_sym}"
-                    state.index_sym = index_sym
+                    state.index_sym = f"NSE:{index_raw}"
+                    index_sym = index_raw
 
                     ref_date = None
                     if data.get('date'):
@@ -483,8 +482,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     strike = dm.get_atm_strike(state.replay_data_idx['close'].iloc[0], step=100 if "BANK" in index_sym else 50)
 
-                    state.ce_sym = dm.get_option_symbol(index_sym, strike, "C", reference_date=ref_date)
-                    state.pe_sym = dm.get_option_symbol(index_sym, strike, "P", reference_date=ref_date)
+                    # Ensure consistent prefixing for Replay mode
+                    state.ce_sym = f"NSE:{dm.get_option_symbol(index_sym, strike, 'C', reference_date=ref_date)}"
+                    state.pe_sym = f"NSE:{dm.get_option_symbol(index_sym, strike, 'P', reference_date=ref_date)}"
                     state.replay_data_ce = dm.get_data(state.ce_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
                     state.replay_data_pe = dm.get_data(state.pe_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date)
 
@@ -760,15 +760,14 @@ async def send_replay_step(websocket, state, send=True):
         if send and websocket.client_state != WebSocketState.CONNECTED: return
         if state.replay_data_ce is None or state.replay_data_pe is None or state.replay_data_idx is None: return
 
-        # 2. Slice Data (Increased context to 100 bars)
-        sub_ce = state.replay_data_ce.iloc[max(0, state.replay_idx-100):state.replay_idx]
-        sub_pe = state.replay_data_pe.iloc[max(0, state.replay_idx-100):state.replay_idx]
+        # 2. Slice Data (Send all data from the start of the day up to the current replay index)
+        sub_ce = state.replay_data_ce.iloc[0:state.replay_idx]
+        sub_pe = state.replay_data_pe.iloc[0:state.replay_idx]
         if sub_ce.empty or sub_pe.empty: return
 
         last_time = sub_ce.index[-1]
         # Matching slice for index
-        idx_full = state.replay_data_idx[state.replay_data_idx.index <= last_time]
-        sub_idx = idx_full.iloc[-100:]
+        sub_idx = state.replay_data_idx[state.replay_data_idx.index <= last_time]
         
         if sub_ce.empty or sub_pe.empty:
             with open("replay_debug.log", "a") as f:
@@ -846,7 +845,11 @@ async def send_replay_step(websocket, state, send=True):
         # EOD Square-off check
         if is_market_closing(last_time):
             for trade in state.active_trades[:]:
-                df = sub_ce if trade.symbol == state.ce_sym else (sub_pe if trade.symbol == state.pe_sym else sub_idx)
+                if trade.symbol == state.ce_sym: df = sub_ce
+                elif trade.symbol == state.pe_sym: df = sub_pe
+                else: df = sub_idx # fallback to index if needed
+
+                if df.empty: continue
                 last_price = df['close'].iloc[-1]
                 last_time_shifted = int(df.index[-1].timestamp()) + 19800
                 trade.close(last_price, last_time_shifted, "EOD_SQUAREOFF")
@@ -984,9 +987,11 @@ async def run_full_backtest(websocket, state, index_sym, date_str):
         ce_sym = dm.get_option_symbol(index_sym, strike, "C", reference_date=ref_date_eod)
         pe_sym = dm.get_option_symbol(index_sym, strike, "P", reference_date=ref_date_eod)
 
-        state.index_sym = f"NSE:{index_sym}"
-        state.ce_sym = f"NSE:{ce_sym}"
-        state.pe_sym = f"NSE:{pe_sym}"
+        # Clean and Re-prefix to ensure single NSE: prefix
+        clean_idx = index_sym.replace("NSE:", "")
+        state.index_sym = f"NSE:{clean_idx}"
+        state.ce_sym = f"NSE:{ce_sym.replace('NSE:', '')}"
+        state.pe_sym = f"NSE:{pe_sym.replace('NSE:', '')}"
 
         ce_df = dm.get_data(ce_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date_eod)
         pe_df = dm.get_data(pe_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date_eod)
@@ -1245,10 +1250,10 @@ async def fetch_historical_pcr(index_sym, ref_date):
     # Let's use simple naive comparison for now or consistent localization.
     start_ts = int(start_of_day.timestamp())
     end_ts = int(end_of_day.timestamp())
-    
+
     clean_sym = index_sym.replace("NSE:", "")
     db_history = db.get_pcr_history(clean_sym, start_ts, end_ts)
-    
+
     if not db_history.empty:
         logger.info(f"✅ Using DB cached PCR data for {clean_sym} ({len(db_history)} intervals)")
         # Convert back to interval-map format: "HH:MM" -> {pcr, call_oi, put_oi}
@@ -1828,7 +1833,23 @@ def handle_new_trade(state, strategy_name, symbol, setup, time, store=True, stor
 
 def check_trade_exits(state, sub_idx, sub_ce, sub_pe, store_db=True):
     for trade in state.active_trades[:]:
-        df = sub_ce if trade.symbol == state.ce_sym else (sub_pe if trade.symbol == state.pe_sym else sub_idx)
+        # Determine which data to use based on trade symbol
+        if trade.symbol == state.ce_sym:
+            df = sub_ce
+        elif trade.symbol == state.pe_sym:
+            df = sub_pe
+        elif trade.symbol == state.index_sym:
+            df = sub_idx
+        else:
+            # Fallback to symbol matching ignoring NSE: prefix
+            t_sym = trade.symbol.replace("NSE:", "")
+            if t_sym == state.ce_sym.replace("NSE:", ""): df = sub_ce
+            elif t_sym == state.pe_sym.replace("NSE:", ""): df = sub_pe
+            elif t_sym == state.index_sym.replace("NSE:", ""): df = sub_idx
+            else:
+                logger.warning(f"No data slice found for trade symbol {trade.symbol}")
+                continue
+
         if df.empty: continue
 
         last_price = df['close'].iloc[-1]
