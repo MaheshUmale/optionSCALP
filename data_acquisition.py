@@ -49,9 +49,13 @@ state = GlobalState()
 @app.post("/api/signal")
 async def receive_signal(signal: dict):
     """Signals from Strategy Engine or Exit logic"""
-    logger.info(f"Signal: {signal['strat_name']} on {signal['symbol']} Type: {signal.get('type')}")
+    sig_type = signal.get('type', 'BUY').upper()
+    if sig_type == 'LONG': sig_type = 'BUY'
+    elif sig_type == 'SHORT': sig_type = 'SELL'
 
-    if signal.get('type') == 'BUY':
+    logger.info(f"Signal: {signal['strat_name']} on {signal['symbol']} Type: {sig_type}")
+
+    if sig_type == 'BUY':
         new_trade = Trade(
             symbol=signal['symbol'],
             entry_price=signal['entry_price'],
@@ -65,7 +69,7 @@ async def receive_signal(signal: dict):
 
     new_signal = {
         "id": str(uuid.uuid4()),
-        "type": signal.get('type', 'BUY'),
+        "type": sig_type,
         "price": signal['entry_price'],
         "time": signal.get('iso_time') or (datetime.fromtimestamp(signal['time'] - 19800, tz=timezone.utc).isoformat() if 'time' in signal else datetime.now(timezone.utc).isoformat()),
         "label": signal['strat_name']
@@ -80,7 +84,7 @@ async def receive_signal(signal: dict):
 
     return {"status": "accepted"}
 
-@app.websocket("/ws")
+@app.websocket("/trading")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     state.websocket = websocket
@@ -138,6 +142,7 @@ async def replay_engine(cursor):
     last_emit_time = 0
     for doc in cursor:
         if not state.is_playing: break
+        if '_id' in doc: del doc['_id']
         await process_tick(doc)
         curr_ts = doc['_insertion_time'].timestamp()
         if curr_ts - last_emit_time >= 1.0:
@@ -182,17 +187,30 @@ def calculate_tick_metrics(key, data, ltp):
     oi_change = current_oi - start_oi
     tick = {
         "ltp": ltp, "ltq": int(data.get('ltpc', {}).get('ltq', 0)),
-        "atp": data.get('atp', ltp), "vtt": int(data.get('vtt', 0)),
+        "atp": float(data.get('atp', ltp)), "vtt": int(data.get('vtt', 0)),
         "oi": current_oi, "oiChange": oi_change,
         "oiChangePct": round((oi_change/start_oi*100) if start_oi>0 else 0, 2),
-        "iv": 0, "tbq": int(data.get('tbq', 0)), "tsq": int(data.get('tsq', 0))
+        "iv": float(data.get('iv', 0)),
+        "tbq": int(data.get('tbq', 0)), "tsq": int(data.get('tsq', 0))
     }
     prev_p, prev_oi = state.market_state.last_price.get(key, ltp), state.market_state.last_oi.get(key, current_oi)
     tick['buildup'] = calculate_buildup(ltp - prev_p, current_oi - prev_oi)
     state.market_state.last_price[key], state.market_state.last_oi[key] = ltp, current_oi
 
     greeks = data.get('optionGreeks', {})
-    tick.update({k: greeks.get(k, 0) for k in ['delta', 'theta', 'gamma', 'vega']})
+    tick["greeks"] = {
+        "delta": greeks.get('delta', 0),
+        "theta": greeks.get('theta', 0),
+        "gamma": greeks.get('gamma', 0),
+        "vega": greeks.get('vega', 0),
+        "rho": greeks.get('rho', 0)
+    }
+
+    bid_ask = data.get('marketLevel', {}).get('bidAskQuote', [])
+    tick["depth"] = {
+        "bids": [{"price": b.get('bidP', 0), "quantity": int(b.get('bidQ', 0)), "orders": 0} for b in bid_ask],
+        "asks": [{"price": a.get('askP', 0), "quantity": int(a.get('askQ', 0)), "orders": 0} for a in bid_ask]
+    }
     return tick
 
 def update_history(sym, history, price, vtt, timestamp):
@@ -229,7 +247,13 @@ def update_oi_data(key, tick):
                     row[side], row[side+'Change'], found = tick['oi'], tick['oiChange'], True
                     break
             if not found:
-                state.market_state.oiData.append({"strike": strike, "callOi": tick['oi'] if side=='callOi' else 0, "putOi": tick['oi'] if side=='putOi' else 0, "callOiChange": tick['oiChange'] if side=='callOi' else 0, "putOiChange": tick['oiChange'] if side=='putOi' else 0})
+                state.market_state.oiData.append({
+                    "strike": strike,
+                    "callOi": tick['oi'] if side=='callOi' else 0,
+                    "putOi": tick['oi'] if side=='putOi' else 0,
+                    "callOiChange": tick['oiChange'] if side=='callOi' else 0,
+                    "putOiChange": tick['oiChange'] if side=='putOi' else 0
+                })
 
     total_c = sum(row['callOi'] for row in state.market_state.oiData)
     total_p = sum(row['putOi'] for row in state.market_state.oiData)
@@ -263,4 +287,4 @@ async def process_tick_live(update):
     }
     await process_tick(doc)
 
-if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=8001)
+if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=8080)

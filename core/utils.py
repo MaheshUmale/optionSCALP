@@ -86,7 +86,4 @@ def calculate_buildup(price_change, oi_change):
         return "Long Unwinding"
     elif price_change > 0 and oi_change < 0:
         return "Short Covering"
-    elif price_change == 0:
-        if oi_change > 0: return "Buildup"
-        if oi_change < 0: return "Unwinding"
     return "Neutral"
