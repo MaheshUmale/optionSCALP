@@ -2,25 +2,40 @@
 
 The **UI Server** is a lightweight Flask application responsible for serving the frontend assets of the OptionScalp Pro dashboard.
 
-## Functionalities
+## Interaction Details & Data Handling
 
-- **Asset Delivery**: Serves the main HTML structure, CSS styling, and client-side JavaScript.
-- **Client Initialization**: Provides the initial landing page that bootstraps the `CommandController` logic in the browser.
+### Client-Side Architecture
 
-## Data In
+The UI is driven by `static/js/main.js` which manages a `CommandController`. This controller is responsible for:
+- **WebSocket Handshake**: Connecting to the Data Acquisition Hub (Port 8001).
+- **State Management**: Keeping track of current Index (BANKNIFTY/NIFTY) and Mode (LIVE/REPLAY).
+- **Chart Orchestration**: Feeding data into `ChartManager` (Lightweight Charts) for rendering.
 
-- **Browser Requests**: Standard HTTP GET requests for:
-    - `/` (The main dashboard).
-    - `/static/js/*.js` (Chart logic, WebSocket controller).
-    - `/static/css/*.css` (The dark-themed professional interface).
+### Frontend Data Expectations
 
-## Data Out
+The UI expects standardized payloads from the Hub to render components:
 
-- **HTML/JS/CSS**: The browser-ready application bundle.
+#### 1. Market Context Rendering
+Expects a `pcr_insights` object to update the "Market Context" sidebar.
+- **Trend Label**: Updates `market-trend` element.
+- **PCR Value**: Updates `pcr-value` element.
+- **Buildup Badge**: Dynamic color coding based on `buildup_status`.
+
+#### 2. Action Stream
+Expects a `new_signals` array. Each signal is rendered as a "Stream Item":
+- **Bullish**: Green border/text (if sentiment is BULLISH or symbol contains 'CE').
+- **Bearish**: Red border/text (if sentiment is BEARISH or symbol contains 'PE').
+- **Tooltip**: Displays the `reason` field on hover.
+
+#### 3. Chart Synchronization
+The `ChartManager` handles synchronization across three panes (Index, CE, PE):
+- **Crosshair Sync**: Moving mouse on one chart moves it on others.
+- **Time Range Sync**: Zooming/panning is locked across all three charts using an `isSyncing` guard.
+- **Replay Growth**: For `replay_step`, the chart uses `update` rather than `setData` to provide a smooth "live-growing" effect.
 
 ## Data Flow
 
-1. **Request**: The user navigates to `http://localhost:8000`.
-2. **Response**: The UI Server sends `templates/live.html` (the primary dashboard).
-3. **Connect**: The browser's client-side JavaScript (`main.js`) detects the host. If it's on port 8000, it automatically establishes a WebSocket connection to the **Data Acquisition Hub** on port 8001.
-4. **Render**: The dashboard becomes interactive as it receives the first `live_data` packet from the Hub.
+1. **Request**: User navigates to `http://localhost:8000`.
+2. **Bootstrap**: `ui_server.py` delivers the HTML/JS bundle.
+3. **Cross-Origin Connect**: `main.js` detects the environment and connects to the Hub on port 8001.
+4. **Interactive State**: The Hub pushes `live_data`, and the UI populates charts and stats panels.

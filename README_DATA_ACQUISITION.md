@@ -10,29 +10,97 @@ The **Data Acquisition Hub** serves as the central nervous system of the OptionS
 - **WebSocket Gateway**: Serves as the primary WebSocket server (Port 8001), broadcasting live updates, replay steps, and market context to connected clients.
 - **Replay Orchestration**: Manages the state machine for "Backtest Replay" mode, incrementally fetching and pushing historical data slices to simulate live trading.
 
-## Data In
+## API Contracts & Data Fields
 
-- **Upstox API**:
-    - Historical 1-minute and 5-minute OHLCV candles for Indices and Options.
-    - Live WebSocket feed (`marketFF` and `indexFF`) for tick-by-tick updates.
-- **Trendlyne API**:
-    - Per-strike buildup and OI data for Nifty and Bank Nifty option chains.
-- **UI WebSocket Commands**:
-    - `fetch_live`: Requests initialization data for a specific index.
-    - `start_replay`: Triggers historical data simulation for a specific date.
-    - `replay_control`: Play/Pause signals for the replay loop.
+### WebSocket Commands (Inbound to Hub)
 
-## Data Out
+#### `fetch_live`
+Initializes a live session for a specific index.
+```json
+{
+  "type": "fetch_live",
+  "index": "BANKNIFTY" | "NIFTY"
+}
+```
 
-- **WebSocket Payloads**:
-    - `live_data`: Initial dashboard state (candles, markers, PnL stats).
-    - `live_update`: Real-time price ticks and candle closures.
-    - `replay_step`: Incremental data slices for backtesting.
-    - `pcr_update`: Fresh PCR insights and trend analysis.
-- **SQLite DB**:
-    - Persisted OHLCV bars in the `ohlcv` table.
-    - Calculated PCR history in the `pcr_data` table.
-    - Live and historical trade records in the `trades` table.
+#### `start_replay`
+Starts a backtest replay for a specific date.
+```json
+{
+  "type": "start_replay",
+  "index": "BANKNIFTY" | "NIFTY",
+  "date": "YYYY-MM-DD"
+}
+```
+
+#### `replay_control`
+Controls the playback state of the replay engine.
+```json
+{
+  "type": "replay_control",
+  "action": "play" | "pause"
+}
+```
+
+### WebSocket Payloads (Outbound from Hub)
+
+#### `live_data` / `history_data`
+Sends full initialization state.
+```json
+{
+  "type": "live_data",
+  "index_symbol": "NSE:BANKNIFTY",
+  "ce_symbol": "NSE:BANKNIFTY260123C58800",
+  "pe_symbol": "NSE:BANKNIFTY260123P58800",
+  "index_data": [OHLCV],
+  "ce_data": [OHLCV],
+  "pe_data": [OHLCV],
+  "new_signals": [Signal],
+  "pnl_stats": PnLStats,
+  "pcr_insights": PCRInsight
+}
+```
+
+#### `live_update`
+Broadcasts real-time price ticks.
+```json
+{
+  "type": "live_update",
+  "symbol": "NSE:BANKNIFTY",
+  "candle": {
+    "time": 1705981500,
+    "open": 58850.5,
+    "high": 58870.2,
+    "low": 58840.1,
+    "close": 58865.0,
+    "volume": 1500
+  }
+}
+```
+
+### Core Data Structures
+
+#### OHLCV Object
+```json
+{
+  "time": number (UNIX seconds),
+  "open": float,
+  "high": float,
+  "low": float,
+  "close": float,
+  "volume": float
+}
+```
+
+#### PCR Insight Object
+```json
+{
+  "pcr": float (Total PE OI / Total CE OI),
+  "pcr_change": float,
+  "buildup_status": "SHORT COVERING" | "LONG BUILDUP" | "NEUTRAL",
+  "trend": "BULLISH" | "BEARISH" | "SIDEWAYS"
+}
+```
 
 ## Data Flow
 
