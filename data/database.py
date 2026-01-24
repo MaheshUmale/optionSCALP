@@ -72,6 +72,18 @@ class DatabaseManager:
                 )
             ''')
 
+            # Historical PCR Data Table (5-min intervals)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pcr_data (
+                    symbol TEXT,
+                    timestamp INTEGER,
+                    pcr REAL,
+                    total_call_oi REAL,
+                    total_put_oi REAL,
+                    PRIMARY KEY (symbol, timestamp)
+                )
+            ''')
+
             conn.commit()
 
     def store_ohlcv(self, symbol, interval, df):
@@ -155,6 +167,30 @@ class DatabaseManager:
         if strategy_name:
             query += " WHERE strategy_name = ?"
             params.append(strategy_name)
+
+        with self._get_connection() as conn:
+            return pd.read_sql_query(query, conn, params=params)
+
+    def store_pcr_history(self, symbol, timestamp, pcr, total_call_oi, total_put_oi):
+        with self._get_connection() as conn:
+            conn.execute('''
+                INSERT OR REPLACE INTO pcr_data (symbol, timestamp, pcr, total_call_oi, total_put_oi)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (symbol, timestamp, pcr, total_call_oi, total_put_oi))
+            conn.commit()
+
+    def get_pcr_history(self, symbol, start_ts=None, end_ts=None):
+        query = "SELECT timestamp, pcr, total_call_oi, total_put_oi FROM pcr_data WHERE symbol = ?"
+        params = [symbol]
+
+        if start_ts:
+            query += " AND timestamp >= ?"
+            params.append(start_ts)
+        if end_ts:
+            query += " AND timestamp <= ?"
+            params.append(end_ts)
+
+        query += " ORDER BY timestamp ASC"
 
         with self._get_connection() as conn:
             return pd.read_sql_query(query, conn, params=params)
