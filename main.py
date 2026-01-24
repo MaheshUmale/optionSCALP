@@ -432,7 +432,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         live_feed.add_symbols(list(set(symbols)))
 
                 elif data['type'] == 'start_replay':
-                    logger.info(f"Starting replay for {data['index']} at {data.get('date', 'now')}")
+                    index_raw = data['index'].replace("NSE:", "")
+                    logger.info(f"Starting replay for {index_raw} at {data.get('date', 'now')}")
                     state.is_playing = False
                     state.is_live = False
                     # Reset state for new replay
@@ -440,10 +441,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     state.reset_trading_state()
                     await websocket.send_json({"type": "reset_ui"})
 
-                    index_sym = data['index']
-                    if not index_sym.startswith("NSE:"):
-                        index_sym = f"NSE:{index_sym}"
-                    state.index_sym = index_sym
+                    state.index_sym = f"NSE:{index_raw}"
+                    index_sym = index_raw
 
                     ref_date = None
                     if data.get('date'):
@@ -988,9 +987,11 @@ async def run_full_backtest(websocket, state, index_sym, date_str):
         ce_sym = dm.get_option_symbol(index_sym, strike, "C", reference_date=ref_date_eod)
         pe_sym = dm.get_option_symbol(index_sym, strike, "P", reference_date=ref_date_eod)
 
-        state.index_sym = f"NSE:{index_sym}"
-        state.ce_sym = f"NSE:{ce_sym}"
-        state.pe_sym = f"NSE:{pe_sym}"
+        # Clean and Re-prefix to ensure single NSE: prefix
+        clean_idx = index_sym.replace("NSE:", "")
+        state.index_sym = f"NSE:{clean_idx}"
+        state.ce_sym = f"NSE:{ce_sym.replace('NSE:', '')}"
+        state.pe_sym = f"NSE:{pe_sym.replace('NSE:', '')}"
 
         ce_df = dm.get_data(ce_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date_eod)
         pe_df = dm.get_data(pe_sym, interval=Interval.in_1_minute, n_bars=1000, reference_date=ref_date_eod)
@@ -1252,7 +1253,7 @@ async def fetch_historical_pcr(index_sym, ref_date):
 
     clean_sym = index_sym.replace("NSE:", "")
     db_history = db.get_pcr_history(clean_sym, start_ts, end_ts)
-    
+
     if not db_history.empty:
         logger.info(f"✅ Using DB cached PCR data for {clean_sym} ({len(db_history)} intervals)")
         # Convert back to interval-map format: "HH:MM" -> {pcr, call_oi, put_oi}
