@@ -150,7 +150,10 @@ async def replay_engine(cursor):
             last_emit_time = curr_ts
             await asyncio.sleep(0.01)
 
+last_broadcast_time = 0
+
 async def process_tick(doc):
+    global last_broadcast_time
     key = doc.get('instrumentKey') or doc.get('instrument_key')
     ff = doc.get('fullFeed', {})
     data = ff.get('marketFF') or ff.get('indexFF')
@@ -176,6 +179,13 @@ async def process_tick(doc):
     if closed: await trigger_engine(doc['_insertion_time'])
     check_trade_exits(tick, sym)
     update_oi_data(key, tick)
+
+    # Broadcast for Live mode
+    if state.is_live and state.websocket:
+        curr_ts = datetime.now().timestamp()
+        if curr_ts - last_broadcast_time >= 1.0:
+            await state.websocket.send_json(clean_json(state.market_state.to_dict()))
+            last_broadcast_time = curr_ts
 
 def calculate_tick_metrics(key, data, ltp):
     current_oi = int(data.get('oi', 0))
@@ -274,17 +284,49 @@ async def trigger_engine(timestamp):
 
 async def handle_fetch_live(data):
     state.is_playing, state.is_live = False, True
-    def callback(upd): asyncio.run_coroutine_threadsafe(process_tick_live(upd), asyncio.get_event_loop())
+    idx_raw = data.get('index', 'NIFTY').replace("NSE:", "")
+    state.index_sym = f"NSE:{idx_raw}"
+
+    # Initial Setup
+    idx_df = dm.get_data(state.index_sym, n_bars=1)
+    if not idx_df.empty:
+        spot = idx_df['close'].iloc[-1]
+        mapping = dm.getNiftyAndBNFnOKeys([idx_raw], {idx_raw: spot})
+        if idx_raw in mapping:
+            setup_market_mapping(idx_raw, mapping[idx_raw], spot)
+
+    def callback(upd):
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(process_tick_live(upd))
+        except RuntimeError:
+            asyncio.run(process_tick_live(upd))
+
     feed_manager.subscribe(callback)
-    # Subscription logic would go here
+
+    # Start/Get Feed
+    upstox = feed_manager.get_upstox_feed(config.ACCESS_TOKEN)
+    symbols_with_keys = [{"symbol": sym, "key": key} for key, sym in state.market_state.rev_instrument_keys.items()]
+    if symbols_with_keys:
+        upstox.add_symbols(symbols_with_keys)
 
 async def process_tick_live(update):
     # Map update fields to MongoDB-like doc and call process_tick
     doc = {
-        "instrumentKey": update['symbol'],
+        "instrumentKey": update.get('symbol') or update.get('instrument_key'),
         "_insertion_time": datetime.now(timezone.utc),
-        "fullFeed": {"marketFF": {"ltpc": {"ltp": update['price'], "ltq": update.get('ltq', 0)}, "vtt": update.get('volume', 0), "oi": update.get('oi', 0)}}
+        "fullFeed": {
+            "marketFF": {
+                "ltpc": {"ltp": update.get('ltp', update.get('price', 0)), "ltq": update.get('ltq', 0)},
+                "vtt": update.get('vtt', update.get('volume', 0)),
+                "oi": update.get('oi', 0),
+                "atp": update.get('atp', 0),
+                "iv": update.get('iv', 0),
+                "tbq": update.get('tbq', 0),
+                "tsq": update.get('tsq', 0)
+            }
+        }
     }
     await process_tick(doc)
 
-if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=8080)
+if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=8001)
