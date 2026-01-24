@@ -58,14 +58,17 @@ class DataManager:
         return expires[-1]
 
     def get_option_symbol(self, index, strike, opt_type, expiry=None, reference_date=None):
+        # Clean index symbol from any prefix
+        clean_index = index.replace("NSE:", "").replace("INDEX:", "")
+
         if expiry is None:
-            expiry = self.get_next_expiry(index, reference_date=reference_date)
+            expiry = self.get_next_expiry(clean_index, reference_date=reference_date)
 
         # Correct TradingView NSE Option Symbol format: (INDEX)(YYMMDD)(C/P)(STRIKE)
         # opt_type should be "C" or "P"
         type_code = opt_type[0].upper() # Handle "CE"->"C", "PE"->"P"
 
-        sym = f"{index}{expiry}{type_code}{int(strike)}"
+        sym = f"{clean_index}{expiry}{type_code}{int(strike)}"
         print(f"Generated option symbol for TV: {sym}")
         return sym
 
@@ -241,7 +244,11 @@ class DataManager:
     def get_data(self, symbol, interval=Interval.in_5_minute, n_bars=100, reference_date=None):
         logger.info(f"DataManager.get_data called for {symbol} (n_bars={n_bars}, reference_date={reference_date})")
         # Clean symbol if needed (e.g. remove NSE: prefix for inner searches)
-        clean_sym = symbol.replace("NSE:", "")
+        # Handle multiple prefixes if they exist
+        clean_sym = symbol
+        while clean_sym.startswith("NSE:"):
+            clean_sym = clean_sym[4:]
+
         int_str = str(interval)
 
         # 1. Try DB first
