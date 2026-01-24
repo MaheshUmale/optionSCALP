@@ -3,14 +3,20 @@ import pandas as pd
 import threading
 from datetime import datetime
 import json
+try:
+    from config import DB_PATH
+except ImportError:
+    DB_PATH = "optionscalp.db"
 
 class DatabaseManager:
     _instance = None
     _lock = threading.Lock()
 
-    def __new__(cls, db_path="optionscalp.db"):
+    def __new__(cls, db_path=None):
         with cls._lock:
             if cls._instance is None:
+                if db_path is None:
+                    db_path = DB_PATH
                 cls._instance = super(DatabaseManager, cls).__new__(cls)
                 cls._instance.db_path = db_path
                 cls._instance._init_db()

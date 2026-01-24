@@ -77,7 +77,12 @@ class CommandController {
 
     connect() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        let host = window.location.host;
+        // If we are served from UI server (8000), connect to Data Hub (8001)
+        if (host.includes(':8000')) {
+            host = host.replace(':8000', ':8001');
+        }
+        const wsUrl = `${protocol}//${host}/ws`;
 
         this.ws = new WebSocket(wsUrl);
 

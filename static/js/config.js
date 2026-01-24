@@ -4,7 +4,7 @@
 
 export const CONFIG = {
     // WebSocket
-    WS_URL: `ws://${window.location.host}/ws`,
+    WS_URL: `ws://${window.location.hostname}:8001/ws`,
 
     // Chart Settings
     CHART_OPTIONS: {
