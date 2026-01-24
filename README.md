@@ -1,172 +1,80 @@
-# OptionScalp Pro - Professional Dashboard Quick Reference
+# OptionScalp Pro - Modular Trading Platform
 
-## 🚀 What's New
+OptionScalp Pro is a professional-grade trading and backtesting dashboard for Nifty and Bank Nifty options. The system has been refactored into a high-performance, modular 3-tier architecture to ensure scalability and reliability.
 
-### Single Unified Dashboard
-Access the new professional dashboard at: **http://localhost:8000/**
+## 🏗️ System Architecture
 
-![Dashboard Preview](dashboard_preview_1769149964456.png)
+The platform is divided into three independent services:
+
+1. **[Data Acquisition Hub](README_DATA_ACQUISITION.md) (Port 8001)**:
+   - Manages external API connectivity (Upstox, Trendlyne).
+   - Handles SQLite database persistence for OHLCV, PCR, and Trades.
+   - Serves as the real-time WebSocket gateway for the UI.
+
+2. **[Strategy Engine](README_STRATEGY_ENGINE.md) (Port 8002)**:
+   - High-performance stateless signal generation engine.
+   - Evaluates 21+ technical strategies in real-time.
+   - Monitors active trades tick-by-tick for automated exit execution.
+
+3. **[UI Server](README_UI_SERVER.md) (Port 8000)**:
+   - Serves the professional dark-themed dashboard and static assets.
+   - Handles client-side cross-origin WebSocket initialization.
 
 ---
 
-## 📁 New File Structure
+## 🚀 Quick Start
 
-### CSS (Modular Design System)
-```
-static/css/
-├── variables.css      - Design tokens (colors, fonts, spacing)
-├── components.css     - Reusable UI components
-├── dashboard.css      - Main layout system
-├── charts.css         - Chart-specific styles
-└── widgets.css        - Widget panels
-```
+To run the complete platform, start all three services in separate terminals:
 
-### JavaScript (ES6 Modules)
-```
-static/js/
-├── config.js          - Global configuration
-├── websocket.js       - WebSocket manager
-├── main.js            - Application entry point
-├── charts/
-│   └── manager.js     - Chart orchestration
-└── widgets/
-    ├── signals.js     - Signal panel
-    ├── pnl.js         - P&L tracker
-    ├── market.js      - Market overview
-    └── strategies.js  - Strategy performance
+### 1. Start the Data Hub
+```bash
+python data_acquisition.py
 ```
 
----
-
-## 🎯 Key Features
-
-### Professional Design
-- ✅ Institutional dark theme
-- ✅ Consistent typography (Inter + Roboto Mono)
-- ✅ Smooth animations and transitions
-- ✅ Responsive layout
-
-### Enhanced Charting
-- ✅ 3 synchronized charts (Index, CE, PE)
-- ✅ Real-time data updates
-- ✅ Volume overlays
-- ✅ Popout functionality
-
-### Trading Widgets
-- ✅ Market Overview (Index, Trend, PCR)
-- ✅ Live Signals Panel
-- ✅ P&L Tracker with Win Rate
-- ✅ Strategy Performance
-
----
-
-## 🔗 Routes
-
-| URL | Page | Status |
-|-----|------|--------|
-| `/` | **New Dashboard** | ✨ Active |
-| `/chart?symbol=NIFTY` | Chart Popout | ✅ Updated |
-| `/live` | Legacy Live View | 🔄 Preserved |
-| `/replay` | Replay Mode | 🔄 Preserved |
-
----
-
-## 🧹 Files You Can Delete (After Testing)
-
-Once you confirm the new dashboard works perfectly:
-
-```
-static/style.css       - Old monolithic CSS
-static/script.js       - Old monolithic JavaScript
-templates/index.html   - Unused template
+### 2. Start the Strategy Engine
+```bash
+python engine.py
 ```
 
-Optional (if you don't need legacy views):
-```
-templates/live.html
-templates/live_index.html
-```
-
----
-
-## ⚡ Quick Start
-
-1. **Start the server:**
-   ```powershell
-   cd d:\optionSCALP
-   python main.py
-   ```
-
-2. **Open browser:**
-   Navigate to `http://localhost:8000/`
-
-3. **Go live:**
-   - Select index (NIFTY or BANKNIFTY)
-   - Click "Go Live" button
-   - Watch charts populate and signals appear
-
----
-
-## 📊 Dashboard Layout
-
-### Left Sidebar (360px)
-- Market Overview metrics
-- Active Signals panel (scrollable)
-
-### Center Charts (Flex)
-- INDEX chart (top)
-- CE OPTION chart (middle)
-- PE OPTION chart (bottom)
-- All synchronized for crosshair and zoom
-
-### Right Panel (320px)
-Three tabs:
-1. **P&L** - Total P&L, wins/losses, win rate
-2. **Positions** - Active positions table
-3. **Strategies** - Strategy performance breakdown
-
----
-
-## 🎨 Color Palette
-
-```css
-Primary Background:  #0B0E11
-Secondary:          #161A1F
-Cards:              #1E222D
-Accent Blue:        #2962FF
-Bullish Green:      #26A69A
-Bearish Red:        #EF5350
-Text Primary:       #E0E3EB
-Text Secondary:     #B2B5BE
+### 3. Start the UI Server
+```bash
+python ui_server.py
 ```
 
----
-
-## 📝 Next Steps
-
-1. ✅ Test the new dashboard
-2. ✅ Verify all live data flows correctly
-3. ✅ Try all interactive features
-4. 🔄 Report any issues
-5. 🗑️ Clean up old files after confirmation
+### 4. Access the Dashboard
+Navigate to **[http://localhost:8000](http://localhost:8000)** in your browser.
 
 ---
 
-## 💡 Tips
+## ✨ Key Features & Fixes
 
-- **Fullscreen Charts**: Click the fullscreen button (⛶) on any chart
-- **Popout Charts**: Click the popout button (↗) to open chart in new window
-- **Tab Switching**: Use tabs in right panel to switch between P&L, Positions, and Strategies
-- **Responsive**: Resize browser to see responsive behavior
+### 📊 Precision PCR Aggregation
+- **41 Strikes**: Calculates PCR by summing absolute Open Interest for ATM ± 20 strikes.
+- **DB Caching**: All PCR data is stored in `trading_data.db` to prevent redundant API calls.
+- **5-Min Buckets**: Data is organized into precise time intervals for trend analysis.
+
+### 💰 Reliable PnL Tracking
+- **Option Premiums**: All trade calculations (entries, SL, Targets) are strictly enforced using option premium prices, eliminating scale glitches.
+- **Codified Risk**: Standardized 30-point SL for Bank Nifty and 20-point SL for Nifty options.
+
+### 🔄 Advanced Backtest Replay
+- **Stable Zoom**: Fixed 80-bar visible window with future-time buffer ensures charts never drift.
+- **Incremental Growth**: Replay mode pushes data candle-by-candle for realistic simulation.
 
 ---
 
-## 📚 Documentation
+## 🔗 Technical Documentation
 
-- [implementation_plan.md](file:///d:/optionSCALP/implementation_plan.md) - Detailed plan
-- [task.md](file:///d:/optionSCALP/task.md) - Task breakdown  
-- [walkthrough.md](file:///d:/optionSCALP/walkthrough.md) - Complete walkthrough
+- **[Formal API Contracts (Data Hub)](README_DATA_ACQUISITION.md)** - Exhaustive schemas for WebSocket and HTTP interfaces.
+- **[Evaluation Contract (Engine)](README_STRATEGY_ENGINE.md)** - Detailed specs for signal generation requests.
+- **[Handshake Details (UI)](README_UI_SERVER.md)** - Frontend data handling and synchronization specs.
 
 ---
 
-**Congratulations! Your trading dashboard is now professional and ready to impress. 🎉**
+## 🎨 Professional Design System
+- **Institutional Dark Theme**: Optimized for low-eye-strain professional trading.
+- **Synchronized Panes**: Crosshair and time-range sync across Index, CE, and PE charts.
+- **Action Stream**: Real-time signal log with plain-English rationales and sentiment coloring.
+
+---
+**Disclaimer**: This platform is for educational and analysis purposes. Always verify trades with your broker.
