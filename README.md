@@ -1,80 +1,46 @@
-# OptionScalp Pro - Modular Trading Platform
+# OptionScalp Cockpit - Backend
 
-OptionScalp Pro is a professional-grade trading and backtesting dashboard for Nifty and Bank Nifty options. The system has been refactored into a high-performance, modular 3-tier architecture to ensure scalability and reliability.
+This is the backend for the **Modern Options Buyer's Cockpit**. It serves real-time trading data, signals, and analytics via WebSocket following the Cockpit v3.0 Specification.
 
 ## 🏗️ System Architecture
 
-The platform is divided into three independent services:
+The platform is divided into two primary services:
 
-1. **[Data Acquisition Hub](README_DATA_ACQUISITION.md) (Port 8001)**:
-   - Manages external API connectivity (Upstox, Trendlyne).
-   - Handles SQLite database persistence for OHLCV, PCR, and Trades.
-   - Serves as the real-time WebSocket gateway for the UI.
+1. **Data Acquisition Hub (Port 8001)**:
+   - Manages external data connectivity (MongoDB, Upstox).
+   - Handles real-time calculation of Option Greeks, PCR, and Market Buildup.
+   - Serves as the WebSocket gateway for the Modern UI.
 
-2. **[Strategy Engine](README_STRATEGY_ENGINE.md) (Port 8002)**:
-   - High-performance stateless signal generation engine.
-   - Evaluates 21+ technical strategies in real-time.
-   - Monitors active trades tick-by-tick for automated exit execution.
-
-3. **[UI Server](README_UI_SERVER.md) (Port 8000)**:
-   - Serves the professional dark-themed dashboard and static assets.
-   - Handles client-side cross-origin WebSocket initialization.
-
----
+2. **Strategy Engine (Port 8002)**:
+   - Signal generation engine.
+   - Evaluates technical strategies in real-time.
+   - Triggers signals that are routed back to the Data Hub.
 
 ## 🚀 Quick Start
 
-To run the complete platform, start all three services in separate terminals:
+### 1. Configure MongoDB
+Ensure MongoDB is running at `localhost:27017` with the `upstox_strategy_db` database and `tick_data` collection containing Upstox Full Feed records.
 
-### 1. Start the Data Hub
+### 2. Start the Data Hub
 ```bash
 python data_acquisition.py
 ```
 
-### 2. Start the Strategy Engine
+### 3. Start the Strategy Engine
 ```bash
 python engine.py
 ```
 
-### 3. Start the UI Server
-```bash
-python ui_server.py
-```
+### 4. Connect the Modern UI
+Follow the instructions in the [Modern Options Buyer's Cockpit](https://github.com/MaheshUmale/Modern-Options-Buyer-s-Cockpit) repository to start the frontend and connect it to `ws://localhost:8001/ws`.
 
-### 4. Access the Dashboard
-Navigate to **[http://localhost:8000](http://localhost:8000)** in your browser.
+## ✨ Key Features
 
----
-
-## ✨ Key Features & Fixes
-
-### 📊 Precision PCR Aggregation
-- **41 Strikes**: Calculates PCR by summing absolute Open Interest for ATM ± 20 strikes.
-- **DB Caching**: All PCR data is stored in `trading_data.db` to prevent redundant API calls.
-- **5-Min Buckets**: Data is organized into precise time intervals for trend analysis.
-
-### 💰 Reliable PnL Tracking
-- **Option Premiums**: All trade calculations (entries, SL, Targets) are strictly enforced using option premium prices, eliminating scale glitches.
-- **Codified Risk**: Standardized 30-point SL for Bank Nifty and 20-point SL for Nifty options.
-
-### 🔄 Advanced Backtest Replay
-- **Stable Zoom**: Fixed 80-bar visible window with future-time buffer ensures charts never drift.
-- **Incremental Growth**: Replay mode pushes data candle-by-candle for realistic simulation.
-
----
+- **Cockpit v3.0 Compliance**: Implements the full `MarketState` payload specification.
+- **Black-Scholes Greeks**: Real-time calculation of Delta, Gamma, Theta, and Vega.
+- **Market Buildup**: Sentiment analysis based on Price and OI relationship.
+- **Interactive Replay**: Smooth tick-by-tick replay from MongoDB historical data.
 
 ## 🔗 Technical Documentation
 
-- **[Formal API Contracts (Data Hub)](README_DATA_ACQUISITION.md)** - Exhaustive schemas for WebSocket and HTTP interfaces.
-- **[Evaluation Contract (Engine)](README_STRATEGY_ENGINE.md)** - Detailed specs for signal generation requests.
-- **[Handshake Details (UI)](README_UI_SERVER.md)** - Frontend data handling and synchronization specs.
-
----
-
-## 🎨 Professional Design System
-- **Institutional Dark Theme**: Optimized for low-eye-strain professional trading.
-- **Synchronized Panes**: Crosshair and time-range sync across Index, CE, and PE charts.
-- **Action Stream**: Real-time signal log with plain-English rationales and sentiment coloring.
-
----
-**Disclaimer**: This platform is for educational and analysis purposes. Always verify trades with your broker.
+- **[Integration Specification](https://github.com/MaheshUmale/Modern-Options-Buyer-s-Cockpit/blob/main/BACKEND_INTEGRATION_SPEC.md)** - Detailed WebSocket data contracts.

@@ -9,3 +9,4 @@ pandas_ta
 websocket-client
 httpx
 upstox-python-sdk
+pymongo
