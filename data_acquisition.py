@@ -27,7 +27,12 @@ IST_TZ = timezone(timedelta(hours=5, minutes=30))
 ENGINE_URL = "http://localhost:8002/evaluate"
 
 app = FastAPI(title="OptionScalp: Data Acquisition Hub (Cockpit v3.0 Spec)")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 dm = DataManager()
 db = DatabaseManager(db_path=config.DB_PATH)
@@ -45,6 +50,10 @@ class GlobalState:
         self.strike_map = {} # strike -> {"ce_key": ..., "pe_key": ...}
 
 state = GlobalState()
+
+@app.get("/")
+async def root():
+    return {"status": "OptionScalp Data Acquisition Hub is running", "spec": "Cockpit v3.0"}
 
 @app.post("/api/signal")
 async def receive_signal(signal: dict):
@@ -85,6 +94,7 @@ async def receive_signal(signal: dict):
     return {"status": "accepted"}
 
 @app.websocket("/trading")
+@app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     state.websocket = websocket
@@ -126,6 +136,9 @@ async def handle_start_replay(data):
 def setup_market_mapping(idx_raw, mapping, spot):
     state.market_state.instrument_keys[state.index_sym] = "NSE_INDEX|Nifty Bank" if "BANK" in idx_raw else "NSE_INDEX|Nifty 50"
     state.market_state.rev_instrument_keys[state.market_state.instrument_keys[state.index_sym]] = state.index_sym
+
+    # Initialize underlying tick with spot price
+    state.market_state.underlying['tick']['ltp'] = spot
 
     strike = dm.get_atm_strike(spot, step=100 if "BANK" in idx_raw else 50)
     for opt in mapping['options']:
@@ -294,13 +307,13 @@ async def handle_fetch_live(data):
         mapping = dm.getNiftyAndBNFnOKeys([idx_raw], {idx_raw: spot})
         if idx_raw in mapping:
             setup_market_mapping(idx_raw, mapping[idx_raw], spot)
+            # Initial broadcast
+            if state.websocket:
+                await state.websocket.send_json(clean_json(state.market_state.to_dict()))
 
+    main_loop = asyncio.get_running_loop()
     def callback(upd):
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(process_tick_live(upd))
-        except RuntimeError:
-            asyncio.run(process_tick_live(upd))
+        asyncio.run_coroutine_threadsafe(process_tick_live(upd), main_loop)
 
     feed_manager.subscribe(callback)
 
