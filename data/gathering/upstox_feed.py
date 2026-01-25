@@ -81,6 +81,7 @@ class UpstoxLiveFeed:
                         ts = datetime.now(timezone.utc).timestamp()
 
                     display_symbol = self.key_to_symbol.get(key, key)
+                    # logger.info(f"[UpstoxLiveFeed] Tick: {display_symbol} @ {ltp}")
 
                     update = {
                         "symbol": display_symbol,
@@ -140,6 +141,7 @@ class UpstoxLiveFeed:
         """
         symbols_with_keys: list of dicts like {"symbol": "NSE:NIFTY", "key": "NSE_INDEX|Nifty 50"}
         """
+        logger.info(f"[UpstoxLiveFeed] Adding symbols: {symbols_with_keys}")
         new_keys = []
         for item in symbols_with_keys:
             key = item["key"]

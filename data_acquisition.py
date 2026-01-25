@@ -102,10 +102,14 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             msg = await websocket.receive_text()
+            logger.info(f"Received from UI: {msg}")
             data = json.loads(msg)
-            if data['type'] == 'fetch_live': await handle_fetch_live(data)
-            elif data['type'] == 'start_replay': await handle_start_replay(data)
-            elif data['type'] == 'ping': await websocket.send_json({"type": "pong"})
+            if data['type'] == 'fetch_live':
+                await handle_fetch_live(data)
+            elif data['type'] == 'start_replay':
+                await handle_start_replay(data)
+            elif data['type'] == 'ping':
+                await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
         state.websocket = None
         logger.info("UI Disconnected")
@@ -114,24 +118,55 @@ async def handle_start_replay(data):
     state.is_playing, state.is_live = False, False
     state.market_state = MarketState()
 
-    idx_raw = data['index'].replace("NSE:", "")
+    idx_raw = data.get('index', 'NIFTY').replace("NSE:", "")
     state.index_sym = f"NSE:{idx_raw}"
-    date_str = data.get('date', datetime.now().strftime("%Y-%m-%d"))
+    date_str = data.get('date', '2026-01-23')
+    logger.info(f"Starting Replay for {state.index_sym} on {date_str}")
 
-    ref_date = datetime.strptime(date_str, "%Y-%m-%d").replace(hour=10, minute=0)
-    idx_df = dm.get_data(state.index_sym, n_bars=1, reference_date=ref_date)
-    if idx_df.empty: return await state.websocket.send_json({"type": "error", "message": "No index data"})
+    ref_date = datetime.strptime(date_str, "%Y-%m-%d").replace(hour=15, minute=30)
 
-    mapping = dm.getNiftyAndBNFnOKeys([idx_raw], {idx_raw: idx_df['close'].iloc[0]})
-    if idx_raw not in mapping: return await state.websocket.send_json({"type": "error", "message": "Failed to map instruments"})
+    # 1. Fetch Historical Data (50 bars) for initial charts
+    idx_df = dm.get_data(state.index_sym, n_bars=50, reference_date=ref_date)
+    if idx_df.empty:
+        logger.error(f"No index data for {state.index_sym} on {date_str}")
+        return await state.websocket.send_json({"type": "error", "message": f"No data for {date_str}"})
 
-    setup_market_mapping(idx_raw, mapping[idx_raw], idx_df['close'].iloc[0])
+    spot = idx_df['close'].iloc[-1]
+    mapping = dm.getNiftyAndBNFnOKeys([idx_raw], {idx_raw: spot})
+    if idx_raw not in mapping:
+        return await state.websocket.send_json({"type": "error", "message": "Failed to map instruments"})
 
+    setup_market_mapping(idx_raw, mapping[idx_raw], spot)
+
+    # 2. Populate history for initial broadcast
+    state.market_state.underlying['history'] = [
+        {"time": t.isoformat(), "open": r['open'], "high": r['high'], "low": r['low'], "close": r['close'], "volume": r['volume']}
+        for t, r in idx_df.iterrows()
+    ]
+
+    # Populate Option History
+    for opt_sym, opt_state in [(state.ce_sym, state.market_state.ceOption), (state.pe_sym, state.market_state.peOption)]:
+        opt_df = dm.get_data(opt_sym, n_bars=50, reference_date=ref_date)
+        if not opt_df.empty:
+            opt_state['history'] = [
+                {"time": t.isoformat(), "open": r['open'], "high": r['high'], "low": r['low'], "close": r['close'], "volume": r['volume']}
+                for t, r in opt_df.iterrows()
+            ]
+            opt_state['tick']['ltp'] = opt_df['close'].iloc[-1]
+
+    # Initial Broadcast
+    if state.websocket:
+        await state.websocket.send_json(clean_json(state.market_state.to_dict()))
+
+    # 3. Start granular replay if mongo is available
     all_keys = list(state.market_state.rev_instrument_keys.keys())
-    ticks_cursor = mongo.get_all_ticks_for_session(all_keys, date_str)
-
-    state.is_playing = True
-    asyncio.create_task(replay_engine(ticks_cursor))
+    try:
+        ticks_cursor = mongo.get_all_ticks_for_session(all_keys, date_str)
+        if ticks_cursor:
+            state.is_playing = True
+            asyncio.create_task(replay_engine(ticks_cursor))
+    except Exception as e:
+        logger.warning(f"Mongo replay unavailable: {e}")
 
 def setup_market_mapping(idx_raw, mapping, spot):
     state.market_state.instrument_keys[state.index_sym] = "NSE_INDEX|Nifty Bank" if "BANK" in idx_raw else "NSE_INDEX|Nifty 50"
@@ -299,17 +334,37 @@ async def handle_fetch_live(data):
     state.is_playing, state.is_live = False, True
     idx_raw = data.get('index', 'NIFTY').replace("NSE:", "")
     state.index_sym = f"NSE:{idx_raw}"
+    logger.info(f"Handling fetch_live for {state.index_sym}")
 
-    # Initial Setup
-    idx_df = dm.get_data(state.index_sym, n_bars=1)
+    # Initial Setup - Get some history for charts
+    idx_df = dm.get_data(state.index_sym, n_bars=50)
     if not idx_df.empty:
         spot = idx_df['close'].iloc[-1]
         mapping = dm.getNiftyAndBNFnOKeys([idx_raw], {idx_raw: spot})
         if idx_raw in mapping:
             setup_market_mapping(idx_raw, mapping[idx_raw], spot)
+
+            # Populate history
+            state.market_state.underlying['history'] = [
+                {"time": t.isoformat(), "open": r['open'], "high": r['high'], "low": r['low'], "close": r['close'], "volume": r['volume']}
+                for t, r in idx_df.iterrows()
+            ]
+
+            # Get Option History too
+            for opt_sym, opt_state in [(state.ce_sym, state.market_state.ceOption), (state.pe_sym, state.market_state.peOption)]:
+                opt_df = dm.get_data(opt_sym, n_bars=50)
+                if not opt_df.empty:
+                    opt_state['history'] = [
+                        {"time": t.isoformat(), "open": r['open'], "high": r['high'], "low": r['low'], "close": r['close'], "volume": r['volume']}
+                        for t, r in opt_df.iterrows()
+                    ]
+                    opt_state['tick']['ltp'] = opt_df['close'].iloc[-1]
+
             # Initial broadcast
             if state.websocket:
-                await state.websocket.send_json(clean_json(state.market_state.to_dict()))
+                payload = clean_json(state.market_state.to_dict())
+                logger.info(f"Broadcasting initial state for {state.index_sym} @ {spot}")
+                await state.websocket.send_json(payload)
 
     main_loop = asyncio.get_running_loop()
     def callback(upd):
@@ -324,6 +379,7 @@ async def handle_fetch_live(data):
         upstox.add_symbols(symbols_with_keys)
 
 async def process_tick_live(update):
+    logger.info(f"Live Update: {update['symbol']} @ {update['price']}")
     # Map update fields to MongoDB-like doc and call process_tick
     doc = {
         "instrumentKey": update.get('symbol') or update.get('instrument_key'),
